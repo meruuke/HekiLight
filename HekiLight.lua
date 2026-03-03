@@ -182,9 +182,11 @@ local function Refresh()
 
     -- Cooldown
     if db.showCooldown then
-        local start, duration = C_ActionBar.GetActionCooldown(slotID)
-        if start and start > 0 then
-            cooldownFrame:SetCooldown(start, duration)
+        -- Midnight 12.0: GetActionCooldown returns a table
+        -- { startTime, duration, isEnabled, modRate }
+        local cd = C_ActionBar.GetActionCooldown(slotID)
+        if cd and cd.startTime and cd.startTime > 0 then
+            cooldownFrame:SetCooldown(cd.startTime, cd.duration)
             cooldownFrame:Show()
         else
             cooldownFrame:Hide()
