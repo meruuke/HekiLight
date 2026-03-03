@@ -79,8 +79,44 @@ do
     end
 end
 
---- Return a short keybind string for an action slot, e.g. "C-1" or "F".
-local function GetSlotKeybind(slotID)
+--- Find the keybind of the actual spell the SBA is suggesting,
+--- by looking up the spell on the player's real action bar slots.
+local function GetSuggestedSpellKeybind(sbaSlotID)
+    -- Get the spell ID from the SBA slot (pcall guards against taint)
+    local spellID
+    pcall(function()
+        local actionType, id = GetActionInfo(sbaSlotID)
+        if actionType == "spell" then spellID = id end
+    end)
+
+    if spellID then
+        -- Find all real bar slots that have this spell
+        local slots = C_ActionBar.FindSpellActionButtons(spellID)
+        if slots then
+            for _, slot in ipairs(slots) do
+                if not C_ActionBar.IsAssistedCombatAction(slot) then
+                    local key = GetSlotKeybind(slot)
+                    if key ~= "" then return key end
+                end
+            end
+        end
+    end
+
+    -- Fallback: scan by matching icon texture
+    local texture = C_ActionBar.GetActionTexture(sbaSlotID)
+    if texture then
+        for slot = 1, 120 do
+            if not C_ActionBar.IsAssistedCombatAction(slot)
+            and C_ActionBar.GetActionTexture(slot) == texture then
+                local key = GetSlotKeybind(slot)
+                if key ~= "" then return key end
+            end
+        end
+    end
+
+    return ""
+end
+
     local bindCmd = SLOT_BINDINGS[slotID]
     local key = (bindCmd and GetBindingKey(bindCmd))
              or GetBindingKey("ACTION " .. slotID)  -- fallback
@@ -234,9 +270,9 @@ local function Refresh()
         rangeOverlay:Hide()
     end
 
-    -- Keybind
+    -- Keybind — show the real spell's keybind, not the SBA button's keybind
     if db.showKeybind then
-        keybindText:SetText(GetSlotKeybind(slotID))
+        keybindText:SetText(GetSuggestedSpellKeybind(slotID))
         keybindText:Show()
     else
         keybindText:Hide()
