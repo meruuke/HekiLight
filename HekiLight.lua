@@ -8,6 +8,11 @@
 --   C_ActionBar.IsAssistedCombatAction(slotID)   → bool
 
 local ADDON_NAME = "HekiLight"
+local DEBUG = false  -- toggle with /hkl debug
+
+local function Log(...)
+    if DEBUG then print("|cff88ccffHekiLight [DBG]:|r", ...) end
+end
 
 -- ── Defaults ────────────────────────────────────────────────────────────────
 
@@ -66,12 +71,6 @@ local function GetSlotKeybind(slotID)
     return key
 end
 
---- True when the spell in slotID is out of range for the current target.
-local function IsOutOfRange(slotID)
-    return C_ActionBar.IsActionInRange and
-           C_ActionBar.IsActionInRange(slotID) == false
-end
-
 -- ── UI Construction ───────────────────────────────────────────────────────────
 
 local function BuildUI()
@@ -121,41 +120,68 @@ local function BuildUI()
     keybindText:SetShadowOffset(1, -1)
     keybindText:SetShadowColor(0, 0, 0, 1)
 
-    -- Thin black border
-    local border = CreateFrame("Frame", nil, display, "BackdropTemplate")
-    border:SetAllPoints(display)
-    border:SetFrameLevel(display:GetFrameLevel() + 2)
-    border:SetBackdrop({
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        edgeSize = 10,
-    })
-    border:SetBackdropBorderColor(0, 0, 0, 1)
+    -- Thin black border (guard against missing mixin on some clients)
+    if BackdropTemplateMixin then
+        local border = CreateFrame("Frame", nil, display, "BackdropTemplate")
+        border:SetAllPoints(display)
+        border:SetFrameLevel(display:GetFrameLevel() + 2)
+        border:SetBackdrop({
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            edgeSize = 10,
+        })
+        border:SetBackdropBorderColor(0, 0, 0, 1)
+    end
 
     display:Hide()
+    Log("BuildUI complete, iconSize=", db.iconSize)
+end
+
+-- ── SBA Slot Detection ────────────────────────────────────────────────────────
+
+-- Try the fast direct API first; fall back to scanning all slots with
+-- IsAssistedCombatAction in case FindAssistedCombatActionButtons returns empty
+-- (can happen depending on which SBA mode Blizzard is using).
+local function FindSBASlot()
+    if C_ActionBar.HasAssistedCombatActionButtons() then
+        local slots = C_ActionBar.FindAssistedCombatActionButtons()
+        if slots and #slots > 0 then
+            Log("FindAssistedCombatActionButtons → slot", slots[1])
+            return slots[1]
+        end
+        Log("HasAssisted=true but FindAssisted returned empty, scanning slots...")
+    else
+        Log("HasAssistedCombatActionButtons = false")
+    end
+
+    -- Fallback: scan action bar slots 1-120
+    for slot = 1, 120 do
+        if C_ActionBar.IsAssistedCombatAction(slot) then
+            Log("Fallback scan found SBA slot:", slot)
+            return slot
+        end
+    end
+    return nil
 end
 
 -- ── Core Update Logic ─────────────────────────────────────────────────────────
 
 local function Refresh()
-    -- SBA not active: hide and bail
-    if not C_ActionBar.HasAssistedCombatActionButtons() then
+    local slotID = FindSBASlot()
+
+    if not slotID then
+        Log("No SBA slot found — hiding display")
         display:Hide()
         return
     end
 
-    local slots = C_ActionBar.FindAssistedCombatActionButtons()
-    if not slots or #slots == 0 then
-        display:Hide()
-        return
-    end
-
-    local slotID  = slots[1]
     local texture = C_ActionBar.GetActionTexture(slotID)
-
     if not texture then
+        Log("Slot", slotID, "has no texture — hiding display")
         display:Hide()
         return
     end
+
+    Log("Showing spell from slot", slotID, "texture:", texture)
 
     -- Icon
     iconTexture:SetTexture(texture)
@@ -174,8 +200,14 @@ local function Refresh()
     end
 
     -- Range indicator
-    if db.showOutOfRange and IsOutOfRange(slotID) then
-        rangeOverlay:Show()
+    if db.showOutOfRange then
+        local inRange = C_ActionBar.IsActionInRange(slotID)
+        -- inRange: true = in range, false = out of range, nil = no range requirement
+        if inRange == false then
+            rangeOverlay:Show()
+        else
+            rangeOverlay:Hide()
+        end
     else
         rangeOverlay:Hide()
     end
@@ -213,6 +245,7 @@ events:RegisterEvent("PLAYER_REGEN_DISABLED")   -- combat start
 events:RegisterEvent("PLAYER_REGEN_ENABLED")    -- combat end
 events:RegisterEvent("UPDATE_BINDINGS")
 events:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+events:RegisterEvent("ACTIONBAR_UPDATE_STATE")  -- fires when SBA changes highlight
 
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
@@ -220,22 +253,29 @@ events:SetScript("OnEvent", function(_, event, arg1)
         BuildUI()
 
     elseif event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+        -- Handle logging in while already in combat
+        if UnitAffectingCombat("player") then
+            inCombat = true
+            elapsed  = db.pollRate
+            display:SetScript("OnUpdate", OnUpdate)
+        end
         Refresh()
 
     elseif event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
         elapsed  = db.pollRate  -- fire immediately on next frame
         display:SetScript("OnUpdate", OnUpdate)
+        Log("Entered combat — poll loop started")
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
         display:SetScript("OnUpdate", nil)
         display:Hide()
+        Log("Left combat — poll loop stopped")
 
-    elseif event == "UPDATE_BINDINGS" then
-        Refresh()
-
-    elseif event == "ACTIONBAR_SLOT_CHANGED" then
+    elseif event == "ACTIONBAR_UPDATE_STATE" or
+           event == "ACTIONBAR_SLOT_CHANGED" or
+           event == "UPDATE_BINDINGS" then
         Refresh()
     end
 end)
@@ -252,6 +292,8 @@ local function PrintHelp()
     print("  /hkl poll  <seconds>   set poll rate (default 0.05)")
     print("  /hkl keybind on|off    toggle keybind text")
     print("  /hkl range on|off      toggle out-of-range tint")
+    print("  /hkl debug             toggle debug output")
+    print("  /hkl status            print current SBA state")
 end
 
 SLASH_HEKILIGHT1 = "/hekilight"
@@ -321,6 +363,29 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         db.showOutOfRange = false
         rangeOverlay:Hide()
         print("|cff88ccffHekiLight:|r Out-of-range tint disabled.")
+
+    elseif msg == "debug" then
+        DEBUG = not DEBUG
+        print("|cff88ccffHekiLight:|r Debug output " .. (DEBUG and "ON" or "OFF") .. ".")
+
+    elseif msg == "status" then
+        local hasAPI = C_ActionBar.HasAssistedCombatActionButtons ~= nil
+        local hasActive = hasAPI and C_ActionBar.HasAssistedCombatActionButtons()
+        local slots = hasActive and C_ActionBar.FindAssistedCombatActionButtons() or {}
+        print("|cff88ccffHekiLight status:|r")
+        print("  API available:", tostring(hasAPI))
+        print("  HasAssistedCombatActionButtons:", tostring(hasActive))
+        print("  FindAssistedCombatActionButtons slots:", #slots > 0 and table.concat(slots, ", ") or "(none)")
+        print("  In combat:", tostring(inCombat))
+        print("  Display visible:", tostring(display:IsShown()))
+        -- Scan for IsAssistedCombatAction hits
+        local found = {}
+        for slot = 1, 120 do
+            if C_ActionBar.IsAssistedCombatAction(slot) then
+                tinsert(found, slot)
+            end
+        end
+        print("  IsAssistedCombatAction hits:", #found > 0 and table.concat(found, ", ") or "(none)")
 
     else
         PrintHelp()
