@@ -208,12 +208,11 @@ local function BuildUI()
     rangeOverlay:SetColorTexture(1, 0, 0, 0.35)
     rangeOverlay:Hide()
 
-    -- Keybind label — white text with black shadow, bottom-right like default bars
-    keybindText = display:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    -- Keybind label — thick outline for maximum readability over any icon
+    keybindText = display:CreateFontString(nil, "OVERLAY")
+    keybindText:SetFont("Fonts\\FRIZQT__.TTF", 14, "THICKOUTLINE")
     keybindText:SetPoint("BOTTOMRIGHT", display, "BOTTOMRIGHT", -2, 3)
     keybindText:SetTextColor(1, 1, 1, 1)
-    keybindText:SetShadowOffset(2, -2)
-    keybindText:SetShadowColor(0, 0, 0, 1)
 
     display:Hide()
     Log("BuildUI complete, size=", size, "strata=HIGH level=100")
