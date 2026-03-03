@@ -23,7 +23,7 @@ local DEFAULTS = {
     scale       = 1.0,
     locked      = false,
     showKeybind = true,
-    showCooldown = true,
+    showCooldown = false,   -- SBA cooldown data is taint-protected; enable at your own risk
     showOutOfRange = true,
     -- How often (seconds) to refresh while in combat
     pollRate    = 0.05,
@@ -180,15 +180,20 @@ local function Refresh()
     -- Icon
     iconTexture:SetTexture(texture)
 
-    -- Cooldown
+    -- Cooldown — SBA slot cooldown data is marked secret by Blizzard's taint
+    -- system; wrap in pcall so a taint error doesn't spam the log.
     if db.showCooldown then
-        -- Midnight 12.0: GetActionCooldown returns a table
-        -- { startTime, duration, isEnabled, modRate }
-        local cd = C_ActionBar.GetActionCooldown(slotID)
-        if cd and cd.startTime and cd.startTime > 0 then
-            cooldownFrame:SetCooldown(cd.startTime, cd.duration)
-            cooldownFrame:Show()
-        else
+        local ok = pcall(function()
+            local cd = C_ActionBar.GetActionCooldown(slotID)
+            local startTime = cd and cd.startTime or 0
+            if startTime > 0 then
+                cooldownFrame:SetCooldown(startTime, cd.duration or 0)
+                cooldownFrame:Show()
+            else
+                cooldownFrame:Hide()
+            end
+        end)
+        if not ok then
             cooldownFrame:Hide()
         end
     else
