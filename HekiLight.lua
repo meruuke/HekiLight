@@ -79,6 +79,19 @@ do
     end
 end
 
+--- Return a short keybind string for an action slot, e.g. "C-1" or "F".
+local function GetSlotKeybind(slotID)
+    local bindCmd = SLOT_BINDINGS[slotID]
+    local key = (bindCmd and GetBindingKey(bindCmd))
+             or GetBindingKey("ACTION " .. slotID)  -- fallback
+    if not key or key == "" then return "" end
+    key = key:gsub("ALT%-",   "A-")
+              :gsub("CTRL%-",  "C-")
+              :gsub("SHIFT%-", "S-")
+              :gsub("NUMPAD",  "N")
+    return key
+end
+
 --- Find the keybind of the actual spell the SBA is suggesting,
 --- by looking up the spell on the player's real action bar slots.
 local function GetSuggestedSpellKeybind(sbaSlotID)
@@ -115,17 +128,6 @@ local function GetSuggestedSpellKeybind(sbaSlotID)
     end
 
     return ""
-end
-
-    local bindCmd = SLOT_BINDINGS[slotID]
-    local key = (bindCmd and GetBindingKey(bindCmd))
-             or GetBindingKey("ACTION " .. slotID)  -- fallback
-    if not key or key == "" then return "" end
-    key = key:gsub("ALT%-",   "A-")
-              :gsub("CTRL%-",  "C-")
-              :gsub("SHIFT%-", "S-")
-              :gsub("NUMPAD",  "N")
-    return key
 end
 
 -- ── UI Construction ───────────────────────────────────────────────────────────
