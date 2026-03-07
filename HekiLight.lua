@@ -34,8 +34,9 @@ local DEFAULTS = {
 -- ── State ────────────────────────────────────────────────────────────────────
 
 local db            -- points at HekiLightDB after ADDON_LOADED
-local inCombat = false
-local elapsed  = 0
+local inCombat    = false
+local inCinematic = false  -- true while a cut-scene or pre-rendered movie is playing
+local elapsed     = 0
 local rangeTicker   -- C_Timer ticker for range overlay pulse animation
 
 -- ── Frames ───────────────────────────────────────────────────────────────────
@@ -478,6 +479,24 @@ end
 
 -- ── Core Update Logic ─────────────────────────────────────────────────────────
 
+--- Returns false (with a reason string) when the icon should be suppressed
+--- regardless of SBA state, or true when it is safe to show.
+local function ShouldShow()
+    if UnitIsDeadOrGhost("player") then
+        return false, "dead"
+    end
+    if UnitInVehicle("player") or UnitHasVehicleUI("player") then
+        return false, "vehicle"
+    end
+    if inCinematic then
+        return false, "cinematic"
+    end
+    if IsResting() then
+        return false, "resting"
+    end
+    return true
+end
+
 local function Refresh()
     local slotID = FindSBASlot()
 
@@ -540,15 +559,20 @@ local function Refresh()
         keybindText:Hide()
     end
 
-    display:Show()
-    Log("display:Show() called — IsShown:", display:IsShown(),
-        "W:", display:GetWidth(), "H:", display:GetHeight(),
-        "x:", db.x, "y:", db.y)
+    -- All content is ready — only show if suppression conditions allow it
+    local ok, reason = ShouldShow()
+    if ok then
+        display:Show()
+        Log("display:Show() called — IsShown:", display:IsShown(),
+            "W:", display:GetWidth(), "H:", display:GetHeight(),
+            "x:", db.x, "y:", db.y)
+    else
+        display:Hide()
+        Log("display suppressed — reason:", reason)
+    end
 end
 
 -- ── Combat Polling ────────────────────────────────────────────────────────────
-
--- Poll during combat so the display reacts to every GCD without relying solely
 -- on events (some SBA changes don't fire explicit events).
 local function OnUpdate(_, dt)
     elapsed = elapsed + dt
@@ -569,6 +593,12 @@ events:RegisterEvent("PLAYER_REGEN_ENABLED")    -- combat end
 events:RegisterEvent("UPDATE_BINDINGS")
 events:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 events:RegisterEvent("ACTIONBAR_UPDATE_STATE")  -- fires when SBA changes highlight
+events:RegisterEvent("UNIT_FLAGS")              -- catches death / vehicle state changes
+events:RegisterEvent("UNIT_HEALTH")             -- instant hide on death (no poll lag)
+events:RegisterEvent("CINEMATIC_START")         -- in-engine cut-scene begins
+events:RegisterEvent("CINEMATIC_STOP")          -- in-engine cut-scene ends
+events:RegisterEvent("PLAY_MOVIE")              -- pre-rendered movie begins
+events:RegisterEvent("STOP_MOVIE")              -- pre-rendered movie ends
 
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
@@ -598,6 +628,20 @@ events:SetScript("OnEvent", function(_, event, arg1)
         display:SetScript("OnUpdate", nil)
         display:Hide()
         Log("Left combat — poll loop stopped")
+
+    elseif event == "CINEMATIC_START" or event == "PLAY_MOVIE" then
+        inCinematic = true
+        display:Hide()
+        Log("Cinematic started — display hidden")
+
+    elseif event == "CINEMATIC_STOP" or event == "STOP_MOVIE" then
+        inCinematic = false
+        Refresh()
+        Log("Cinematic ended — refreshed")
+
+    elseif event == "UNIT_FLAGS" or event == "UNIT_HEALTH" then
+        -- Only care about the player unit; re-run Refresh so ShouldShow() acts immediately
+        if arg1 == "player" then Refresh() end
 
     elseif event == "ACTIONBAR_UPDATE_STATE" or
            event == "ACTIONBAR_SLOT_CHANGED" or
@@ -719,12 +763,18 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         local hasAPI = C_ActionBar.HasAssistedCombatActionButtons ~= nil
         local hasActive = hasAPI and C_ActionBar.HasAssistedCombatActionButtons()
         local slots = hasActive and C_ActionBar.FindAssistedCombatActionButtons() or {}
+        local canShow, suppressReason = ShouldShow()
         print("|cff88ccffHekiLight status:|r")
         print("  API available:", tostring(hasAPI))
         print("  HasAssistedCombatActionButtons:", tostring(hasActive))
         print("  FindAssistedCombatActionButtons slots:", #slots > 0 and table.concat(slots, ", ") or "(none)")
         print("  In combat:", tostring(inCombat))
         print("  Display visible:", tostring(display:IsShown()))
+        if canShow then
+            print("  Suppression: |cff00ff00none|r — icon allowed to show")
+        else
+            print("  Suppression: |cffff4444" .. suppressReason .. "|r — icon hidden")
+        end
         -- Scan for IsAssistedCombatAction hits
         local found = {}
         for slot = 1, 120 do
