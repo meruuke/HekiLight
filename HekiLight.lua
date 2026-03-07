@@ -619,6 +619,7 @@ end
 
 -- Returns true if the defensive floater should be shown for this spell.
 local function ShouldShowDefensive()
+    if not inCombat then return false end
     if inCinematic then return false end
     if db.hideWhenDead and UnitIsDeadOrGhost("player") then return false end
     if db.defensiveHealthPct > 0 then
@@ -656,8 +657,6 @@ local function RefreshDefensive()
         defCooldownFrame:Clear()
     end
 
-    -- Position on first show (in case it was reset)
-    defDisplay:SetPoint("CENTER", UIParent, "CENTER", db.defensiveX, db.defensiveY)
     defDisplay:Show()
 end
 
