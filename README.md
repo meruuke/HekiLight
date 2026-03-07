@@ -17,7 +17,7 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 - 🖼️ Tooltip-style border via `BackdropTemplate`
 - 🗺️ Draggable minimap button — click to open the settings panel
 - ⚙️ In-game settings panel (Interface → AddOns → HekiLight)
-- 🔕 Automatically hidden when dead, in a vehicle, during a cinematic, or while resting
+- 🔕 Automatically hidden when dead, mounted, in a vehicle, during a cinematic, resting, or when you have no hostile target
 
 ## Limitations
 

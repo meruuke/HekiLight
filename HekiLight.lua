@@ -485,6 +485,9 @@ local function ShouldShow()
     if UnitIsDeadOrGhost("player") then
         return false, "dead"
     end
+    if IsMounted() then
+        return false, "mounted"
+    end
     if UnitInVehicle("player") or UnitHasVehicleUI("player") then
         return false, "vehicle"
     end
@@ -493,6 +496,9 @@ local function ShouldShow()
     end
     if IsResting() then
         return false, "resting"
+    end
+    if not UnitCanAttack("player", "target") then
+        return false, "no hostile target"
     end
     return true
 end
@@ -599,6 +605,8 @@ events:RegisterEvent("CINEMATIC_START")         -- in-engine cut-scene begins
 events:RegisterEvent("CINEMATIC_STOP")          -- in-engine cut-scene ends
 events:RegisterEvent("PLAY_MOVIE")              -- pre-rendered movie begins
 events:RegisterEvent("STOP_MOVIE")              -- pre-rendered movie ends
+events:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")  -- mount / dismount
+events:RegisterEvent("PLAYER_TARGET_CHANGED")         -- target swapped or cleared
 
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
@@ -642,6 +650,10 @@ events:SetScript("OnEvent", function(_, event, arg1)
     elseif event == "UNIT_FLAGS" or event == "UNIT_HEALTH" then
         -- Only care about the player unit; re-run Refresh so ShouldShow() acts immediately
         if arg1 == "player" then Refresh() end
+
+    elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" or
+           event == "PLAYER_TARGET_CHANGED" then
+        Refresh()
 
     elseif event == "ACTIONBAR_UPDATE_STATE" or
            event == "ACTIONBAR_SLOT_CHANGED" or
