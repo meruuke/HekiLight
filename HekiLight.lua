@@ -183,14 +183,14 @@ local function BuildUI()
     display:SetClampedToScreen(true)
     ApplyPosition()
 
-    -- Backdrop: dark background + thin tooltip-style border
+    -- Backdrop: dark background + tooltip-style border (edgeSize 16 matches UI-Tooltip-Border tile size)
     display:SetBackdrop({
         bgFile   = "Interface\\Buttons\\WHITE8X8",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile     = true,
-        tileSize = 8,
-        edgeSize = 8,
-        insets   = { left = 2, right = 2, top = 2, bottom = 2 },
+        tileSize = 16,
+        edgeSize = 16,
+        insets   = { left = 4, right = 4, top = 4, bottom = 4 },
     })
     display:SetBackdropColor(0, 0, 0, 0.7)
     display:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.9)
@@ -242,7 +242,7 @@ local function BuildUI()
     end)
     rangeOverlay:SetScript("OnHide", function()
         if rangeTicker then rangeTicker:Cancel(); rangeTicker = nil end
-        rangeOverlay:SetAlpha(1)
+        -- alpha resets automatically when frame is shown again via OnShow
     end)
 
     -- Keybind label — NumberFontNormal is the same font Blizzard uses on action buttons
@@ -281,7 +281,7 @@ local function BuildMinimapButton()
     local icon = minimapBtn:CreateTexture(nil, "ARTWORK")
     icon:SetSize(18, 18)
     icon:SetPoint("CENTER")
-    icon:SetTexture("Interface\\Icons\\ability_monk_chiwave")
+    icon:SetTexture("Interface\\Icons\\ability_whirlwind")
 
     local border = minimapBtn:CreateTexture(nil, "OVERLAY")
     border:SetSize(54, 54)
@@ -345,12 +345,17 @@ local function BuildSettingsPanel()
 
     local checkboxRefs = {}
     local sliderRefs   = {}
-    local y = -70
-    local sliderIdx = 0
 
-    local function AddCheckbox(label, tip, getValue, setValue)
+    -- Two-column layout: left = Appearance/Display/Minimap, right = Hide conditions
+    local cols = {
+        left  = { x = 16,  y = -70 },
+        right = { x = 310, y = -70 },
+    }
+
+    local function AddCheckbox(label, tip, getValue, setValue, colName)
+        local col = cols[colName or "left"]
         local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", 16, y)
+        cb:SetPoint("TOPLEFT", col.x, col.y)
         cb.text:SetText(label)
         cb:SetChecked(getValue())
         cb:SetScript("OnClick", function(self) setValue(self:GetChecked()) end)
@@ -364,42 +369,54 @@ local function BuildSettingsPanel()
             cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
         end
         table.insert(checkboxRefs, { cb = cb, getValue = getValue })
-        y = y - 28
+        col.y = col.y - 28
         return cb
     end
 
+    -- Custom slider: no global-name dependency (OptionsSliderTemplate is deprecated in 10.x+)
     local function AddSlider(label, min, max, step, getValue, setValue)
-        sliderIdx = sliderIdx + 1
-        local name   = "HekiLightSettingsSlider" .. sliderIdx
-        local slider = CreateFrame("Slider", name, panel, "OptionsSliderTemplate")
-        slider:SetPoint("TOPLEFT", 20, y - 10)
-        slider:SetWidth(220)
+        local col = cols["left"]
+
+        local labelStr = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        labelStr:SetPoint("TOPLEFT", col.x + 4, col.y)
+        labelStr:SetText(label .. ": " .. getValue())
+
+        local slider = CreateFrame("Slider", nil, panel, "BackdropTemplate")
+        slider:SetPoint("TOPLEFT", col.x + 4, col.y - 18)
+        slider:SetSize(240, 17)
+        slider:SetOrientation("HORIZONTAL")
+        slider:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
+        slider:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\UI-SliderBar-Background",
+            edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
+            tile = true, tileSize = 8, edgeSize = 8,
+            insets = { left = 3, right = 3, top = 6, bottom = 6 },
+        })
         slider:SetMinMaxValues(min, max)
         slider:SetValueStep(step)
         slider:SetObeyStepOnDrag(true)
         slider:SetValue(getValue())
-        _G[name .. "Low"]:SetText(tostring(min))
-        _G[name .. "High"]:SetText(tostring(max))
-        _G[name .. "Text"]:SetText(label .. ": " .. getValue())
         slider:SetScript("OnValueChanged", function(self, val)
             val = math.floor(val / step + 0.5) * step
             setValue(val)
-            _G[name .. "Text"]:SetText(label .. ": " .. val)
+            labelStr:SetText(label .. ": " .. val)
         end)
-        table.insert(sliderRefs, { slider = slider, name = name, label = label,
-                                   step = step, getValue = getValue })
-        y = y - 52
+
+        table.insert(sliderRefs, { slider = slider, labelStr = labelStr,
+                                   label = label, step = step, getValue = getValue })
+        col.y = col.y - 52
         return slider
     end
 
-    local function SectionHeader(text)
+    local function SectionHeader(text, colName)
+        local col = cols[colName or "left"]
         local s = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        s:SetPoint("TOPLEFT", 16, y)
+        s:SetPoint("TOPLEFT", col.x, col.y)
         s:SetText(text)
-        y = y - 22
+        col.y = col.y - 22
     end
 
-    -- Appearance
+    -- ── Left Column: Appearance / Display Options / Minimap ───────────────────
     SectionHeader("Appearance")
     AddCheckbox("Lock position",
         "Prevent the icon from being accidentally dragged. Use /hkl unlock or untick this to reposition it.",
@@ -418,7 +435,6 @@ local function BuildSettingsPanel()
         function() return db and db.iconSize or DEFAULTS.iconSize end,
         function(v) if db then db.iconSize = v; display:SetSize(v, v) end end)
 
-    -- Display Options
     SectionHeader("Display Options")
     AddCheckbox("Show keybind text",
         "Show the keybind for the suggested spell in the corner of the icon.",
@@ -437,7 +453,6 @@ local function BuildSettingsPanel()
         function() return db and db.sounds or false end,
         function(v) if db then db.sounds = v end end)
 
-    -- Minimap
     SectionHeader("Minimap")
     AddCheckbox("Show minimap button",
         "Show the HekiLight button on the minimap. Drag it to reposition.",
@@ -449,45 +464,46 @@ local function BuildSettingsPanel()
             end
         end)
 
-    -- Suppression Rules
-    SectionHeader("Hide Icon When...")
+    -- ── Right Column: Hide Conditions ─────────────────────────────────────────
+    SectionHeader("Hide Icon When...", "right")
     AddCheckbox("Player is dead or a ghost",
         "Hide the icon while you are dead or in spirit form.",
         function() return db and db.hideWhenDead ~= false end,
-        function(v) if db then db.hideWhenDead = v; Refresh() end end)
+        function(v) if db then db.hideWhenDead = v; Refresh() end end, "right")
     AddCheckbox("Player is mounted",
         "Hide the icon while riding any mount.",
         function() return db and db.hideWhenMounted ~= false end,
-        function(v) if db then db.hideWhenMounted = v; Refresh() end end)
+        function(v) if db then db.hideWhenMounted = v; Refresh() end end, "right")
     AddCheckbox("Player is in a vehicle",
         "Hide the icon when controlling a vehicle with its own action bar.",
         function() return db and db.hideWhenVehicle ~= false end,
-        function(v) if db then db.hideWhenVehicle = v; Refresh() end end)
+        function(v) if db then db.hideWhenVehicle = v; Refresh() end end, "right")
     AddCheckbox("A cinematic is playing",
         "Hide the icon during cut-scenes and pre-rendered movies.",
         function() return db and db.hideWhenCinematic ~= false end,
-        function(v) if db then db.hideWhenCinematic = v; Refresh() end end)
+        function(v) if db then db.hideWhenCinematic = v; Refresh() end end, "right")
     AddCheckbox("Player is in a resting area",
         "Hide the icon while in a city or inn.",
         function() return db and db.hideWhenResting ~= false end,
-        function(v) if db then db.hideWhenResting = v; Refresh() end end)
+        function(v) if db then db.hideWhenResting = v; Refresh() end end, "right")
     AddCheckbox("No hostile target",
         "Hide the icon when you have no target or your target is not attackable.",
         function() return db and db.hideWhenNoTarget ~= false end,
-        function(v) if db then db.hideWhenNoTarget = v; Refresh() end end)
+        function(v) if db then db.hideWhenNoTarget = v; Refresh() end end, "right")
 
     -- Refresh all controls to current db values when the panel is shown
     panel:SetScript("OnShow", function()
         for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
         for _, ref in ipairs(sliderRefs) do
             ref.slider:SetValue(ref.getValue())
-            _G[ref.name .. "Text"]:SetText(ref.label .. ": " .. ref.getValue())
+            ref.labelStr:SetText(ref.label .. ": " .. ref.getValue())
         end
     end)
 
-    -- Footer hint
+    -- Footer hint below the deepest column
+    local footerY = math.min(cols.left.y, cols.right.y) - 12
     local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    hint:SetPoint("TOPLEFT", 16, y - 12)
+    hint:SetPoint("TOPLEFT", 16, footerY)
     hint:SetText("/hkl for quick commands  ·  Drag the icon in-game to reposition  ·  /hkl lock to prevent accidental moves")
 
     settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "HekiLight")
