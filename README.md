@@ -17,7 +17,7 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 - 🖼️ Tooltip-style border via `BackdropTemplate`
 - 🗺️ Draggable minimap button — click to open the settings panel
 - ⚙️ In-game settings panel (Interface → AddOns → HekiLight)
-- 🔕 Automatically hidden when dead, mounted, in a vehicle, during a cinematic, resting, or when you have no hostile target
+- 🔕 Automatically hidden in configurable situations: dead, mounted, in a vehicle, during a cinematic, resting, or no hostile target — each toggleable in the Settings panel or via `/hkl hide`
 
 ## Limitations
 
@@ -44,6 +44,12 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 | `/hkl range on\|off` | Toggle out-of-range red tint |
 | `/hkl sounds on\|off` | Toggle combat-entry sound |
 | `/hkl minimap on\|off` | Toggle minimap button |
+| `/hkl hide dead on\|off` | Toggle hide when dead |
+| `/hkl hide mounted on\|off` | Toggle hide when mounted |
+| `/hkl hide vehicle on\|off` | Toggle hide when in a vehicle |
+| `/hkl hide cinematic on\|off` | Toggle hide during cinematics |
+| `/hkl hide resting on\|off` | Toggle hide while resting |
+| `/hkl hide target on\|off` | Toggle hide when no hostile target |
 | `/hkl debug` | Toggle verbose debug output |
 | `/hkl status` | Print SBA state and active suppression reason |
 

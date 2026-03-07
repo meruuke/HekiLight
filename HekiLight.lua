@@ -29,6 +29,13 @@ local DEFAULTS = {
     sounds         = false,  -- subtle sound when icon appears in combat
     minimapAngle   = 225,    -- degrees around minimap (0=right, 90=top, 180=left, 270=bottom)
     minimapShow    = true,
+    -- Suppression conditions (all on by default)
+    hideWhenDead      = true,
+    hideWhenMounted   = true,
+    hideWhenVehicle   = true,
+    hideWhenCinematic = true,
+    hideWhenResting   = true,
+    hideWhenNoTarget  = true,
 }
 
 -- ── State ────────────────────────────────────────────────────────────────────
@@ -432,6 +439,33 @@ local function BuildSettingsPanel()
             end
         end)
 
+    -- Suppression Rules
+    SectionHeader("Hide Icon When...")
+    AddCheckbox("Player is dead or a ghost",
+        "Hide the icon while you are dead or in spirit form.",
+        function() return db and db.hideWhenDead ~= false end,
+        function(v) if db then db.hideWhenDead = v; Refresh() end end)
+    AddCheckbox("Player is mounted",
+        "Hide the icon while riding any mount.",
+        function() return db and db.hideWhenMounted ~= false end,
+        function(v) if db then db.hideWhenMounted = v; Refresh() end end)
+    AddCheckbox("Player is in a vehicle",
+        "Hide the icon when controlling a vehicle with its own action bar.",
+        function() return db and db.hideWhenVehicle ~= false end,
+        function(v) if db then db.hideWhenVehicle = v; Refresh() end end)
+    AddCheckbox("A cinematic is playing",
+        "Hide the icon during cut-scenes and pre-rendered movies.",
+        function() return db and db.hideWhenCinematic ~= false end,
+        function(v) if db then db.hideWhenCinematic = v; Refresh() end end)
+    AddCheckbox("Player is in a resting area",
+        "Hide the icon while in a city or inn.",
+        function() return db and db.hideWhenResting ~= false end,
+        function(v) if db then db.hideWhenResting = v; Refresh() end end)
+    AddCheckbox("No hostile target",
+        "Hide the icon when you have no target or your target is not attackable.",
+        function() return db and db.hideWhenNoTarget ~= false end,
+        function(v) if db then db.hideWhenNoTarget = v; Refresh() end end)
+
     -- Refresh all controls to current db values when the panel is shown
     panel:SetScript("OnShow", function()
         for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
@@ -482,22 +516,22 @@ end
 --- Returns false (with a reason string) when the icon should be suppressed
 --- regardless of SBA state, or true when it is safe to show.
 local function ShouldShow()
-    if UnitIsDeadOrGhost("player") then
+    if db.hideWhenDead and UnitIsDeadOrGhost("player") then
         return false, "dead"
     end
-    if IsMounted() then
+    if db.hideWhenMounted and IsMounted() then
         return false, "mounted"
     end
-    if UnitInVehicle("player") or UnitHasVehicleUI("player") then
+    if db.hideWhenVehicle and (UnitInVehicle("player") or UnitHasVehicleUI("player")) then
         return false, "vehicle"
     end
-    if inCinematic then
+    if db.hideWhenCinematic and inCinematic then
         return false, "cinematic"
     end
-    if IsResting() then
+    if db.hideWhenResting and IsResting() then
         return false, "resting"
     end
-    if not UnitCanAttack("player", "target") then
+    if db.hideWhenNoTarget and not UnitCanAttack("player", "target") then
         return false, "no hostile target"
     end
     return true
@@ -677,6 +711,12 @@ local function PrintHelp()
     print("  /hkl range on|off      toggle out-of-range tint")
     print("  /hkl sounds on|off     toggle combat sounds")
     print("  /hkl minimap on|off    toggle minimap button")
+    print("  /hkl hide dead on|off      toggle hide when dead")
+    print("  /hkl hide mounted on|off   toggle hide when mounted")
+    print("  /hkl hide vehicle on|off   toggle hide in vehicle")
+    print("  /hkl hide cinematic on|off toggle hide during cinematics")
+    print("  /hkl hide resting on|off   toggle hide while resting")
+    print("  /hkl hide target on|off    toggle hide with no hostile target")
     print("  /hkl debug             toggle debug output")
     print("  /hkl status            print current SBA state")
 end
@@ -766,6 +806,20 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         db.minimapShow = false
         if minimapBtn then minimapBtn:Hide() end
         print("|cff88ccffHekiLight:|r Minimap button hidden.")
+
+    -- Hide condition toggles
+    elseif msg == "hide dead on"      then db.hideWhenDead      = true;  Refresh(); print("|cff88ccffHekiLight:|r Hide when dead: ON")
+    elseif msg == "hide dead off"     then db.hideWhenDead      = false; Refresh(); print("|cff88ccffHekiLight:|r Hide when dead: OFF")
+    elseif msg == "hide mounted on"   then db.hideWhenMounted   = true;  Refresh(); print("|cff88ccffHekiLight:|r Hide when mounted: ON")
+    elseif msg == "hide mounted off"  then db.hideWhenMounted   = false; Refresh(); print("|cff88ccffHekiLight:|r Hide when mounted: OFF")
+    elseif msg == "hide vehicle on"   then db.hideWhenVehicle   = true;  Refresh(); print("|cff88ccffHekiLight:|r Hide in vehicle: ON")
+    elseif msg == "hide vehicle off"  then db.hideWhenVehicle   = false; Refresh(); print("|cff88ccffHekiLight:|r Hide in vehicle: OFF")
+    elseif msg == "hide cinematic on"  then db.hideWhenCinematic = true;  Refresh(); print("|cff88ccffHekiLight:|r Hide during cinematic: ON")
+    elseif msg == "hide cinematic off" then db.hideWhenCinematic = false; Refresh(); print("|cff88ccffHekiLight:|r Hide during cinematic: OFF")
+    elseif msg == "hide resting on"   then db.hideWhenResting   = true;  Refresh(); print("|cff88ccffHekiLight:|r Hide while resting: ON")
+    elseif msg == "hide resting off"  then db.hideWhenResting   = false; Refresh(); print("|cff88ccffHekiLight:|r Hide while resting: OFF")
+    elseif msg == "hide target on"    then db.hideWhenNoTarget  = true;  Refresh(); print("|cff88ccffHekiLight:|r Hide with no hostile target: ON")
+    elseif msg == "hide target off"   then db.hideWhenNoTarget  = false; Refresh(); print("|cff88ccffHekiLight:|r Hide with no hostile target: OFF")
 
     elseif msg == "debug" then
         DEBUG = not DEBUG
