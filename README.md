@@ -11,9 +11,13 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 - 🎯 Shows the SBA's current spell recommendation as a floating icon
 - ⌨️ Displays the keybind for that spell (like Hekili did)
 - ⏱️ Cooldown spiral overlay
-- 🔴 Out-of-range tint when the suggested spell can't reach your target
+- 🔴 Pulsing out-of-range tint when the suggested spell can't reach your target
 - 📐 Movable and scalable — drag to reposition when unlocked
 - 💾 Position and settings persist across sessions via `SavedVariables`
+- 🖼️ Tooltip-style border via `BackdropTemplate`
+- 🗺️ Draggable minimap button — click to open the settings panel
+- ⚙️ In-game settings panel (Interface → AddOns → HekiLight)
+- 🔕 Automatically hidden when dead, in a vehicle, during a cinematic, or while resting
 
 ## Limitations
 
@@ -38,6 +42,10 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 | `/hkl poll <seconds>` | Set combat poll rate (default `0.05`) |
 | `/hkl keybind on\|off` | Toggle keybind text |
 | `/hkl range on\|off` | Toggle out-of-range red tint |
+| `/hkl sounds on\|off` | Toggle combat-entry sound |
+| `/hkl minimap on\|off` | Toggle minimap button |
+| `/hkl debug` | Toggle verbose debug output |
+| `/hkl status` | Print SBA state and active suppression reason |
 
 ## Key APIs Used
 
