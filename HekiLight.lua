@@ -508,8 +508,9 @@ end
 -- ── SBA Slot Detection ────────────────────────────────────────────────────────
 
 -- Try the fast direct API first; fall back to scanning all slots with
--- IsAssistedCombatAction in case FindAssistedCombatActionButtons returns empty
--- (can happen depending on which SBA mode Blizzard is using).
+-- IsAssistedCombatAction ONLY when HasAssistedCombatActionButtons is true
+-- but FindAssistedCombatActionButtons returns empty (a known Blizzard edge case).
+-- When HasAssisted is false the addon has nothing to do — return nil immediately.
 local function FindSBASlot()
     if C_ActionBar.HasAssistedCombatActionButtons() then
         local slots = C_ActionBar.FindAssistedCombatActionButtons()
@@ -517,18 +518,17 @@ local function FindSBASlot()
             Log("FindAssistedCombatActionButtons → slot", slots[1])
             return slots[1]
         end
+        -- HasAssisted=true but FindAssisted empty; scan as last resort.
         Log("HasAssisted=true but FindAssisted returned empty, scanning slots...")
-    else
-        Log("HasAssistedCombatActionButtons = false")
-    end
-
-    -- Fallback: scan action bar slots 1-120
-    for slot = 1, 120 do
-        if C_ActionBar.IsAssistedCombatAction(slot) then
-            Log("Fallback scan found SBA slot:", slot)
-            return slot
+        for slot = 1, 120 do
+            if C_ActionBar.IsAssistedCombatAction(slot) then
+                Log("Fallback scan found SBA slot:", slot)
+                return slot
+            end
         end
     end
+    -- SBA is not active — nothing to show.
+    Log("HasAssistedCombatActionButtons = false")
     return nil
 end
 
@@ -634,13 +634,28 @@ local function Refresh()
 end
 
 -- ── Combat Polling ────────────────────────────────────────────────────────────
--- on events (some SBA changes don't fire explicit events).
+-- OnUpdate fires at the configured poll rate and calls Refresh() to track
+-- the SBA suggestion. Only runs when SBA is active AND the player is in combat.
 local function OnUpdate(_, dt)
     elapsed = elapsed + dt
     if elapsed >= db.pollRate then
         elapsed = 0
         Refresh()
     end
+end
+
+-- Start the poll loop only when SBA is actually configured and we're in combat.
+-- Called from combat-start and from action bar change events so the loop can
+-- activate mid-combat if the player adds the SBA button during a fight.
+local function StartPollLoop()
+    elapsed = db.pollRate  -- fire on the very next frame
+    display:SetScript("OnUpdate", OnUpdate)
+    Log("Poll loop started")
+end
+
+local function StopPollLoop()
+    display:SetScript("OnUpdate", nil)
+    Log("Poll loop stopped")
 end
 
 -- ── Event Handling ────────────────────────────────────────────────────────────
@@ -675,22 +690,26 @@ events:SetScript("OnEvent", function(_, event, arg1)
         -- Handle logging in while already in combat
         if UnitAffectingCombat("player") then
             inCombat = true
-            elapsed  = db.pollRate
-            display:SetScript("OnUpdate", OnUpdate)
+            if C_ActionBar.HasAssistedCombatActionButtons() then
+                StartPollLoop()
+            end
         end
         Refresh()
 
     elseif event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
-        elapsed  = db.pollRate  -- fire immediately on next frame
-        display:SetScript("OnUpdate", OnUpdate)
-        Log("Entered combat — poll loop started")
+        -- Only poll if SBA is actually on the action bar; if it's added later,
+        -- ACTIONBAR_SLOT_CHANGED will start the loop at that point.
+        if C_ActionBar.HasAssistedCombatActionButtons() then
+            StartPollLoop()
+        end
+        Log("Entered combat")
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
-        display:SetScript("OnUpdate", nil)
+        StopPollLoop()
         display:Hide()
-        Log("Left combat — poll loop stopped")
+        Log("Left combat")
 
     elseif event == "CINEMATIC_START" or event == "PLAY_MOVIE" then
         inCinematic = true
@@ -719,6 +738,10 @@ events:SetScript("OnEvent", function(_, event, arg1)
         -- Slot content or keybinding actually changed — rebuild the map then re-render.
         RebuildSlotBindings()
         Refresh()
+        -- If SBA was just placed on the bar mid-combat, start polling now.
+        if inCombat and C_ActionBar.HasAssistedCombatActionButtons() then
+            StartPollLoop()
+        end
     end
 end)
 
