@@ -401,6 +401,16 @@ local function BuildSettingsPanel()
 
     -- Appearance
     SectionHeader("Appearance")
+    AddCheckbox("Lock position",
+        "Prevent the icon from being accidentally dragged. Use /hkl unlock or untick this to reposition it.",
+        function() return db and db.locked or false end,
+        function(v)
+            if db then
+                db.locked = v
+                display:EnableMouse(not v)
+                print("|cff88ccffHekiLight:|r Position " .. (v and "locked." or "unlocked — drag to reposition."))
+            end
+        end)
     AddSlider("Scale", 0.2, 3.0, 0.1,
         function() return db and db.scale or DEFAULTS.scale end,
         function(v) if db then db.scale = v; display:SetScale(v) end end)
