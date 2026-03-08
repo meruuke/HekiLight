@@ -25,6 +25,7 @@ local DEFAULTS = {
     showKeybind    = true,
     showCooldown   = false,   -- SBA cooldown data is taint-protected; enable at your own risk
     showOutOfRange = true,
+    showProcGlow   = true,    -- pulse border gold when the suggested spell has an active proc glow
     pollRate       = 0.05,   -- how often (seconds) to refresh while in combat
     sounds         = false,  -- subtle sound when icon appears in combat
     minimapAngle   = 225,    -- degrees around minimap (0=right, 90=top, 180=left, 270=bottom)
@@ -45,6 +46,9 @@ local inCombat    = false
 local inCinematic = false  -- true while a cut-scene or pre-rendered movie is playing
 local elapsed     = 0
 local rangeTicker   -- C_Timer ticker for range overlay pulse animation
+local glowTicker    -- C_Timer ticker for proc-glow border pulse animation
+local isGlowActive  = false
+local currentSuggestionID = nil  -- spellID currently displayed (used to filter glow events)
 
 -- ── Frames ───────────────────────────────────────────────────────────────────
 
@@ -416,6 +420,10 @@ local function BuildSettingsPanel()
         "Pulse the icon red when the suggested spell cannot reach your target.",
         function() return db.showOutOfRange end,
         function(v) db.showOutOfRange = v; if not v then rangeOverlay:Hide() end end)
+    AddCheckbox("Proc glow border",
+        "Pulse the icon border gold when the suggested spell has an active proc glow.",
+        function() return db.showProcGlow end,
+        function(v) db.showProcGlow = v; if not v then StopGlowPulse() end end)
     AddCheckbox("Show cooldown spiral",
         "Display a cooldown sweep on the icon. May cause UI taint — use with caution.",
         function() return db.showCooldown end,
@@ -560,6 +568,40 @@ end
 
 -- ── Core Update Logic ─────────────────────────────────────────────────────────
 
+-- ── Proc-Glow Border Pulse ────────────────────────────────────────────────────
+
+local function StopGlowPulse()
+    if glowTicker then glowTicker:Cancel(); glowTicker = nil end
+    isGlowActive = false
+    -- Restore normal border color
+    if display then display:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.9) end
+end
+
+local function StartGlowPulse()
+    if isGlowActive then return end  -- already running
+    isGlowActive = true
+    local t, dir = 0, 1
+    glowTicker = C_Timer.NewTicker(0.05, function()
+        t = t + dir * 0.06
+        if t >= 1 then t = 1; dir = -1
+        elseif t <= 0 then t = 0; dir = 1 end
+        -- Lerp border from gray (0.5,0.5,0.5) → gold (1,0.85,0)
+        display:SetBackdropBorderColor(
+            0.5 + 0.5  * t,
+            0.5 + 0.35 * t,
+            0.5 - 0.5  * t,
+            0.9)
+    end)
+end
+
+local function UpdateGlowState(spellID)
+    if db.showProcGlow and C_SpellActivationOverlay.IsSpellOverlayed(spellID) then
+        StartGlowPulse()
+    else
+        StopGlowPulse()
+    end
+end
+
 --- Returns false (with a reason string) when the icon should be suppressed
 --- regardless of SBA state, or true when it is safe to show.
 local function ShouldShow()
@@ -598,6 +640,8 @@ local function Refresh()
 
     if not spellID then
         Log("No active suggestion — hiding display")
+        currentSuggestionID = nil
+        StopGlowPulse()
         display:Hide()
         return
     end
@@ -606,6 +650,8 @@ local function Refresh()
     local spellInfo = C_Spell.GetSpellInfo(spellID)
     if not spellInfo or not spellInfo.iconID then
         Log("No spell info for", spellID, "— hiding display")
+        currentSuggestionID = nil
+        StopGlowPulse()
         display:Hide()
         return
     end
@@ -613,6 +659,10 @@ local function Refresh()
 
     -- Icon
     iconTexture:SetTexture(spellInfo.iconID)
+
+    -- Proc-glow border pulse (check after icon is confirmed valid)
+    currentSuggestionID = spellID
+    UpdateGlowState(spellID)
 
     -- Cooldown — use C_Spell API (no slot needed; taint guard still applies)
     if db.showCooldown then
@@ -655,6 +705,8 @@ local function Refresh()
         Log("display:Show() — IsShown:", display:IsShown(),
             "x:", db.x, "y:", db.y)
     else
+        currentSuggestionID = nil
+        StopGlowPulse()
         display:Hide()
         Log("display suppressed — reason:", reason)
     end
@@ -682,6 +734,8 @@ end
 
 local function StopPollLoop()
     display:SetScript("OnUpdate", nil)
+    currentSuggestionID = nil
+    StopGlowPulse()
     Log("Poll loop stopped")
 end
 
@@ -704,6 +758,8 @@ events:RegisterEvent("PLAY_MOVIE")              -- pre-rendered movie begins
 events:RegisterEvent("STOP_MOVIE")              -- pre-rendered movie ends
 events:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")  -- mount / dismount
 events:RegisterEvent("PLAYER_TARGET_CHANGED")         -- target swapped or cleared
+events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")  -- proc glow appears
+events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")  -- proc glow fades
 
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
@@ -763,6 +819,18 @@ events:SetScript("OnEvent", function(_, event, arg1)
         Refresh()
         -- If assist feature was just enabled mid-combat, start polling now.
         if inCombat and IsAssistActive() then StartPollLoop() end
+
+    elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_SHOW" then
+        -- A proc glow appeared — if it's our current suggestion, start pulsing
+        if arg1 == currentSuggestionID and db.showProcGlow then
+            StartGlowPulse()
+        end
+
+    elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
+        -- A proc glow faded — if it was our current suggestion, stop pulsing
+        if arg1 == currentSuggestionID then
+            StopGlowPulse()
+        end
     end
 end)
 
@@ -789,6 +857,7 @@ local function PrintHelp()
     print("  /hkl poll  <seconds>   set poll rate (default 0.05)")
     print("  /hkl keybind on|off    toggle keybind text")
     print("  /hkl range on|off      toggle out-of-range tint")
+    print("  /hkl procglow on|off   toggle proc glow border pulse")
     print("  /hkl sounds on|off     toggle combat sounds")
     print("  /hkl minimap on|off    toggle minimap button")
     print("  /hkl hide dead on|off      toggle hide when dead")
@@ -868,6 +937,16 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         db.showOutOfRange = false
         rangeOverlay:Hide()
         print("|cff88ccffHekiLight:|r Out-of-range tint disabled.")
+
+    elseif msg == "procglow on" then
+        db.showProcGlow = true
+        Refresh()
+        print("|cff88ccffHekiLight:|r Proc glow border enabled.")
+
+    elseif msg == "procglow off" then
+        db.showProcGlow = false
+        StopGlowPulse()
+        print("|cff88ccffHekiLight:|r Proc glow border disabled.")
 
     elseif msg == "sounds on" then
         db.sounds = true
