@@ -563,22 +563,31 @@ end
 --- Returns false (with a reason string) when the icon should be suppressed
 --- regardless of SBA state, or true when it is safe to show.
 local function ShouldShow()
+    -- Hard stops — always suppress, even with an attackable target.
     if db.hideWhenDead and UnitIsDeadOrGhost("player") then
         return false, "dead"
     end
+    if db.hideWhenCinematic and inCinematic then
+        return false, "cinematic"
+    end
+
+    -- An attackable target overrides all remaining soft conditions.
+    -- Handles quest fights in cities, resting areas, while technically mounted, etc.
+    if UnitCanAttack("player", "target") then
+        return true
+    end
+
+    -- No attackable target — soft suppression conditions apply.
     if db.hideWhenMounted and IsMounted() then
         return false, "mounted"
     end
     if db.hideWhenVehicle and (UnitInVehicle("player") or UnitHasVehicleUI("player")) then
         return false, "vehicle"
     end
-    if db.hideWhenCinematic and inCinematic then
-        return false, "cinematic"
-    end
-    if db.hideWhenResting and not inCombat and IsResting() then
+    if db.hideWhenResting and IsResting() then
         return false, "resting"
     end
-    if db.hideWhenNoTarget and not inCombat and not UnitCanAttack("player", "target") then
+    if db.hideWhenNoTarget then
         return false, "no hostile target"
     end
     return true
