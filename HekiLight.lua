@@ -30,13 +30,12 @@ local DEFAULTS = {
     sounds         = false,  -- subtle sound when icon appears in combat
     minimapAngle   = 225,    -- degrees around minimap (0=right, 90=top, 180=left, 270=bottom)
     minimapShow    = true,
-    -- Suppression conditions (all on by default)
+    -- Hard stops (always hide regardless of combat state)
     hideWhenDead      = true,
-    hideWhenMounted   = true,
-    hideWhenVehicle   = true,
     hideWhenCinematic = true,
-    hideWhenResting   = true,
-    hideWhenNoTarget  = true,
+    -- Show conditions (positive logic — show when any of these are true)
+    showWhenInCombat          = true,
+    showWhenAttackableTarget  = true,
 }
 
 -- ── State ────────────────────────────────────────────────────────────────────
@@ -442,32 +441,26 @@ local function BuildSettingsPanel()
             if minimapBtn then minimapBtn:SetShown(v) end
         end)
 
-    -- ── Right Column: Hide Conditions ─────────────────────────────────────────
-    SectionHeader("Hide Icon When...", "right")
+    -- ── Right Column: Visibility Conditions ──────────────────────────────────
+    SectionHeader("Always Hide When...", "right")
     AddCheckbox("Player is dead or a ghost",
         "Hide the icon while you are dead or in spirit form.",
         function() return db.hideWhenDead ~= false end,
         function(v) db.hideWhenDead = v; Refresh() end, "right")
-    AddCheckbox("Player is mounted",
-        "Hide the icon while riding any mount.",
-        function() return db.hideWhenMounted ~= false end,
-        function(v) db.hideWhenMounted = v; Refresh() end, "right")
-    AddCheckbox("Player is in a vehicle",
-        "Hide the icon when controlling a vehicle with its own action bar.",
-        function() return db.hideWhenVehicle ~= false end,
-        function(v) db.hideWhenVehicle = v; Refresh() end, "right")
     AddCheckbox("A cinematic is playing",
         "Hide the icon during cut-scenes and pre-rendered movies.",
         function() return db.hideWhenCinematic ~= false end,
         function(v) db.hideWhenCinematic = v; Refresh() end, "right")
-    AddCheckbox("Player is in a resting area",
-        "Hide the icon while in a city or inn.",
-        function() return db.hideWhenResting ~= false end,
-        function(v) db.hideWhenResting = v; Refresh() end, "right")
-    AddCheckbox("No hostile target",
-        "Hide the icon when you have no target or your target is not attackable.",
-        function() return db.hideWhenNoTarget ~= false end,
-        function(v) db.hideWhenNoTarget = v; Refresh() end, "right")
+
+    SectionHeader("Show Icon When...", "right")
+    AddCheckbox("Player is in combat",
+        "Show the icon whenever you enter combat, regardless of your target.",
+        function() return db.showWhenInCombat ~= false end,
+        function(v) db.showWhenInCombat = v; Refresh() end, "right")
+    AddCheckbox("Target is attackable",
+        "Show the icon when you have a target you can attack (even outside of combat).",
+        function() return db.showWhenAttackableTarget ~= false end,
+        function(v) db.showWhenAttackableTarget = v; Refresh() end, "right")
 
     -- Refresh all controls to current db values when the panel is shown
     panel:SetScript("OnShow", function()
@@ -602,10 +595,10 @@ local function UpdateGlowState(spellID)
     end
 end
 
---- Returns false (with a reason string) when the icon should be suppressed
---- regardless of SBA state, or true when it is safe to show.
+--- Returns true when the icon should be shown, false (+ reason) when it should not.
+--- Logic: hard stops always suppress; then show if ANY positive condition is met.
 local function ShouldShow()
-    -- Hard stops — always suppress, even with an attackable target.
+    -- Hard stops — always hide regardless of combat state.
     if db.hideWhenDead and UnitIsDeadOrGhost("player") then
         return false, "dead"
     end
@@ -613,26 +606,15 @@ local function ShouldShow()
         return false, "cinematic"
     end
 
-    -- An attackable target overrides all remaining soft conditions.
-    -- Handles quest fights in cities, resting areas, while technically mounted, etc.
-    if UnitCanAttack("player", "target") then
+    -- Positive show conditions — show if any enabled condition is met.
+    if db.showWhenInCombat and inCombat then
+        return true
+    end
+    if db.showWhenAttackableTarget and UnitCanAttack("player", "target") then
         return true
     end
 
-    -- No attackable target — soft suppression conditions apply.
-    if db.hideWhenMounted and IsMounted() then
-        return false, "mounted"
-    end
-    if db.hideWhenVehicle and (UnitInVehicle("player") or UnitHasVehicleUI("player")) then
-        return false, "vehicle"
-    end
-    if db.hideWhenResting and IsResting() then
-        return false, "resting"
-    end
-    if db.hideWhenNoTarget then
-        return false, "no hostile target"
-    end
-    return true
+    return false, "no show condition met"
 end
 
 local function Refresh()
@@ -836,15 +818,14 @@ end)
 
 -- ── Slash Commands ────────────────────────────────────────────────────────────
 
--- Data-driven hide-condition map. Adding a new condition only requires a new
--- entry here and a matching key in DEFAULTS — no ladder of elseif needed.
-local HIDE_FLAGS = {
-    dead      = { key = "hideWhenDead",      label = "Hide when dead" },
-    mounted   = { key = "hideWhenMounted",   label = "Hide when mounted" },
-    vehicle   = { key = "hideWhenVehicle",   label = "Hide in vehicle" },
-    cinematic = { key = "hideWhenCinematic", label = "Hide during cinematic" },
-    resting   = { key = "hideWhenResting",   label = "Hide while resting" },
-    target    = { key = "hideWhenNoTarget",  label = "Hide with no hostile target" },
+-- Data-driven condition maps for slash commands.
+local ALWAYS_HIDE_FLAGS = {
+    dead      = { key = "hideWhenDead",      label = "Always hide when dead" },
+    cinematic = { key = "hideWhenCinematic", label = "Always hide during cinematic" },
+}
+local SHOW_FLAGS = {
+    combat = { key = "showWhenInCombat",         label = "Show when in combat" },
+    target = { key = "showWhenAttackableTarget", label = "Show when target is attackable" },
 }
 
 local function PrintHelp()
@@ -860,12 +841,10 @@ local function PrintHelp()
     print("  /hkl procglow on|off   toggle proc glow border pulse")
     print("  /hkl sounds on|off     toggle combat sounds")
     print("  /hkl minimap on|off    toggle minimap button")
-    print("  /hkl hide dead on|off      toggle hide when dead")
-    print("  /hkl hide mounted on|off   toggle hide when mounted")
-    print("  /hkl hide vehicle on|off   toggle hide in vehicle")
-    print("  /hkl hide cinematic on|off toggle hide during cinematics")
-    print("  /hkl hide resting on|off   toggle hide while resting")
-    print("  /hkl hide target on|off    toggle hide with no hostile target")
+    print("  /hkl hide dead on|off      toggle always-hide when dead")
+    print("  /hkl hide cinematic on|off toggle always-hide during cinematics")
+    print("  /hkl show combat on|off    toggle show when in combat")
+    print("  /hkl show target on|off    toggle show when target is attackable")
     print("  /hkl debug             toggle debug output")
     print("  /hkl status            print current SBA state")
 end
@@ -966,16 +945,27 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         if minimapBtn then minimapBtn:Hide() end
         print("|cff88ccffHekiLight:|r Minimap button hidden.")
 
-    -- Hide condition toggles — data-driven via HIDE_FLAGS; no per-condition branches needed.
+    -- Hide/show condition toggles — data-driven via ALWAYS_HIDE_FLAGS / SHOW_FLAGS.
     elseif msg:find("^hide%s") then
         local flag, state = msg:match("^hide%s+(%a+)%s+(on|off)$")
-        local def = flag and HIDE_FLAGS[flag]
+        local def = flag and ALWAYS_HIDE_FLAGS[flag]
         if def then
             db[def.key] = (state == "on")
             Refresh()
             print("|cff88ccffHekiLight:|r " .. def.label .. ": " .. state:upper())
         else
-            print("|cff88ccffHekiLight:|r Unknown condition. Valid: dead, mounted, vehicle, cinematic, resting, target")
+            print("|cff88ccffHekiLight:|r Unknown flag. Valid: dead, cinematic")
+        end
+
+    elseif msg:find("^show%s") then
+        local flag, state = msg:match("^show%s+(%a+)%s+(on|off)$")
+        local def = flag and SHOW_FLAGS[flag]
+        if def then
+            db[def.key] = (state == "on")
+            Refresh()
+            print("|cff88ccffHekiLight:|r " .. def.label .. ": " .. state:upper())
+        else
+            print("|cff88ccffHekiLight:|r Unknown flag. Valid: combat, target")
         end
 
     elseif msg == "debug" then
