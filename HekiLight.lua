@@ -608,25 +608,27 @@ BuildIgnorePanel = function(parentCategory)
                 return
             end
             for _, sid in ipairs(rotSpells) do
-                local si = C_Spell.GetSpellInfo(sid)
-                if si then
-                    local ignored     = db.ignoredSpells[sid]
-                    local info        = UIDropDownMenu_CreateInfo()
-                    info.text         = (ignored and "|cff888888" or "")
-                                        .. si.name
-                                        .. "  |cff666666[" .. sid .. "]|r"
-                                        .. (ignored and " (hidden)|r" or "")
-                    info.icon         = si.iconID
-                    info.disabled     = ignored
-                    local capturedSid  = sid
-                    local capturedName = si.name
-                    if not ignored then
-                        info.func = function()
-                            selectedIgnoreSpellID = capturedSid
-                            UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
+                if IsPlayerSpell(sid) then  -- skip talents/abilities the player hasn't learned
+                    local si = C_Spell.GetSpellInfo(sid)
+                    if si then
+                        local ignored     = db.ignoredSpells[sid]
+                        local info        = UIDropDownMenu_CreateInfo()
+                        info.text         = (ignored and "|cff888888" or "")
+                                            .. si.name
+                                            .. "  |cff666666[" .. sid .. "]|r"
+                                            .. (ignored and " (hidden)|r" or "")
+                        info.icon         = si.iconID
+                        info.disabled     = ignored
+                        local capturedSid  = sid
+                        local capturedName = si.name
+                        if not ignored then
+                            info.func = function()
+                                selectedIgnoreSpellID = capturedSid
+                                UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
+                            end
                         end
+                        UIDropDownMenu_AddButton(info, level)
                     end
-                    UIDropDownMenu_AddButton(info, level)
                 end
             end
         end)
@@ -829,7 +831,7 @@ local function GetSuggestionQueue(n)
         local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
         if ok and rotSpells then
             for _, sid in ipairs(rotSpells) do
-                if sid ~= primaryID and not db.ignoredSpells[sid] then
+                if sid ~= primaryID and not db.ignoredSpells[sid] and IsPlayerSpell(sid) then
                     local onCooldown = false
                     if recentlyCastSpells[sid] then
                         local pastGrace = (GetTime() - recentlyCastSpells[sid]) > MIN_CD_GRACE
