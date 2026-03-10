@@ -11,7 +11,7 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 - 🎯 Shows up to **N spell icons** from the SBA rotation queue (default: 3, configurable 1–5)
 - 🥇 First icon is always the **currently highlighted suggestion** (the spell to cast right now)
 - 🚫 Secondary slots automatically hide spells that are on cooldown — tracked per-cast, so pre-pull cooldowns are respected too
-- 🙈 **Ignore list** — hide specific spells from the secondary list via the Settings panel dropdown or `/hkl ignore`
+- 🙈 **Ignore list** — hide specific spells from the secondary list via the dedicated **Ignored Spells** settings sub-panel or `/hkl ignore`
 - ⌨️ Displays the keybind for the primary spell (like Hekili did)
 - ⏱️ Cooldown spiral overlay on the primary icon
 - 🔴 Pulsing out-of-range tint when the suggested spell can't reach your target
@@ -19,7 +19,9 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 - 📐 Movable and scalable — drag to reposition when unlocked
 - 💾 Position and settings persist across sessions via `SavedVariables`
 - 🗺️ Draggable minimap button — click to open the settings panel
-- ⚙️ In-game settings panel (Interface → AddOns → HekiLight)
+- ⚙️ In-game settings panel split into two canvas layout categories (Interface → AddOns → HekiLight):
+  - **HekiLight** — general options: Appearance, Display, Minimap, Hide/Show conditions
+  - **Ignored Spells** (sub-category) — ignore-list management with dropdown, add, and remove controls
 - 🔕 Automatically hidden in configurable situations: dead, during a cinematic, or no hostile target — each toggleable in Settings or via `/hkl`
 
 ## Limitations

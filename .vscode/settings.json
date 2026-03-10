@@ -17,6 +17,11 @@
     "Lua.type.weakUnionCheck": true,
     "Lua.diagnostics.globals": [
         "SlashCmdList",
-        "Settings"
+        "Settings",
+        "UIDropDownMenu_SetWidth",
+        "UIDropDownMenu_SetText",
+        "UIDropDownMenu_Initialize",
+        "UIDropDownMenu_AddButton",
+        "UIDropDownMenu_CreateInfo"
     ]
 }

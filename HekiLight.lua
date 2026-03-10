@@ -346,6 +346,7 @@ end
 local function BuildSettingsPanel()
     local panel = CreateFrame("Frame")
     panel.name = "HekiLight"
+    panel:SetSize(620, 600)   -- height is set below from actual column content
 
     local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
@@ -503,39 +504,66 @@ local function BuildSettingsPanel()
         function() return db.showWhenAttackableTarget ~= false end,
         function(v) db.showWhenAttackableTarget = v; Refresh() end, "right")
 
-    -- ── Ignored Spells Section (full-width, below both columns) ─────────────────
+    -- ── Footer ───────────────────────────────────────────────────────────────
+    local footerY = math.min(cols.left.y, cols.right.y) - 16
+    local footerHint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    footerHint:SetPoint("TOPLEFT", 16, footerY)
+    footerHint:SetText("/hkl for quick commands  ·  Drag the icon in-game to reposition  ·  /hkl lock to prevent accidental moves")
 
-    local ignoreY = math.min(cols.left.y, cols.right.y) - 20
+    panel:SetHeight(math.abs(footerY) + 30)
 
-    local divider = panel:CreateTexture(nil, "ARTWORK")
-    divider:SetPoint("TOPLEFT", 12, ignoreY)
-    divider:SetSize(600, 1)
-    divider:SetColorTexture(0.3, 0.3, 0.3, 0.8)
-    ignoreY = ignoreY - 22
+    -- Refresh all controls when the panel opens
+    panel:SetScript("OnShow", function()
+        for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
+        for _, ref in ipairs(sliderRefs) do
+            ref.slider:SetValue(ref.getValue())
+            ref.labelStr:SetText(ref.label .. ": " .. ref.getValue())
+        end
+    end)
 
-    local ignoreHeader = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    ignoreHeader:SetPoint("TOPLEFT", 16, ignoreY)
-    ignoreHeader:SetText("Ignored Spells")
-    ignoreY = ignoreY - 18
+    settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "HekiLight")
+    Settings.RegisterAddOnCategory(settingsCategory)
 
-    local ignoreDesc = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    ignoreDesc:SetPoint("TOPLEFT", 16, ignoreY)
-    ignoreDesc:SetText("Spells hidden from the secondary suggestion list. The dropdown shows your current rotation spells.")
-    ignoreY = ignoreY - 30
+    BuildIgnorePanel(settingsCategory)
+end
 
-    -- Forward declarations so button-script closures can reference both functions
+-- ── Ignored Spells Sub-Panel ──────────────────────────────────────────────────
+-- Registered as a child category of the main HekiLight settings panel.
+-- The canvas layout system handles scrolling automatically; we only need to
+-- call subPanel:SetHeight() with the correct content height each time the list
+-- changes so the canvas knows the scroll extent.
+
+function BuildIgnorePanel(parentCategory)
+    local subPanel = CreateFrame("Frame")
+    subPanel.name = "Ignored Spells"
+    subPanel:SetWidth(620)
+    subPanel:SetHeight(200)   -- placeholder; set precisely in RefreshIgnoreList
+
+    local title = subPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("Ignored Spells")
+
+    local desc = subPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    desc:SetPoint("TOPLEFT", 16, -44)
+    desc:SetWidth(590)
+    desc:SetJustifyH("LEFT")
+    desc:SetText("Spells hidden from the secondary suggestion list. Use the dropdown to select a spell from your current rotation, then click Add.")
+
+    -- y cursor: below the description block (~2 lines × 14 px + padding)
+    local controlY = -80
+
     local selectedIgnoreSpellID = nil
     local rowPool = {}
     local PopulateRotationDropdown
     local RefreshIgnoreList
 
-    -- UIDropDownMenu has ~18 px of inherent left padding; offset x by -2 to align
-    local ignoreDD = CreateFrame("Frame", "HekiLightIgnoreDropdown", panel, "UIDropDownMenuTemplate")
-    ignoreDD:SetPoint("TOPLEFT", -2, ignoreY)
+    -- UIDropDownMenu has ~18 px inherent left padding; offset by -2 to align visually
+    local ignoreDD = CreateFrame("Frame", "HekiLightIgnoreDropdown", subPanel, "UIDropDownMenuTemplate")
+    ignoreDD:SetPoint("TOPLEFT", -2, controlY)
     UIDropDownMenu_SetWidth(ignoreDD, 270)
     UIDropDownMenu_SetText(ignoreDD, "Select a rotation spell...")
 
-    local addBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    local addBtn = CreateFrame("Button", nil, subPanel, "UIPanelButtonTemplate")
     addBtn:SetPoint("LEFT", ignoreDD, "RIGHT", -4, 2)
     addBtn:SetSize(150, 22)
     addBtn:SetText("Add to ignore list")
@@ -558,7 +586,8 @@ local function BuildSettingsPanel()
         RefreshIgnoreList()
     end)
 
-    local listBaseY = ignoreY - 36
+    -- First row starts this far below the dropdown row
+    local listBaseY = controlY - 36
 
     PopulateRotationDropdown = function()
         UIDropDownMenu_Initialize(ignoreDD, function(self, level)
@@ -573,14 +602,14 @@ local function BuildSettingsPanel()
             for _, sid in ipairs(rotSpells) do
                 local si = C_Spell.GetSpellInfo(sid)
                 if si then
-                    local ignored      = db.ignoredSpells[sid]
-                    local info         = UIDropDownMenu_CreateInfo()
-                    info.text          = (ignored and "|cff888888" or "")
+                    local ignored     = db.ignoredSpells[sid]
+                    local info        = UIDropDownMenu_CreateInfo()
+                    info.text         = (ignored and "|cff888888" or "")
                                         .. si.name
                                         .. "  |cff666666[" .. sid .. "]|r"
                                         .. (ignored and " (hidden)|r" or "")
-                    info.icon          = si.iconID
-                    info.disabled      = ignored
+                    info.icon         = si.iconID
+                    info.disabled     = ignored
                     local capturedSid  = sid
                     local capturedName = si.name
                     if not ignored then
@@ -607,14 +636,14 @@ local function BuildSettingsPanel()
             rowIdx = rowIdx + 1
             local row = rowPool[rowIdx]
             if not row then
-                row = CreateFrame("Frame", nil, panel)
-                row:SetSize(580, 24)
+                row = CreateFrame("Frame", nil, subPanel)
+                row:SetSize(596, 24)
                 row.icon = row:CreateTexture(nil, "ARTWORK")
                 row.icon:SetSize(20, 20)
                 row.icon:SetPoint("LEFT", 4, 0)
                 row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
                 row.label:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-                row.label:SetWidth(420)
+                row.label:SetWidth(490)
                 row.label:SetJustifyH("LEFT")
                 row.removeBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
                 row.removeBtn:SetSize(70, 20)
@@ -637,32 +666,26 @@ local function BuildSettingsPanel()
             row:Show()
         end
 
-        if not panel.ignoreEmptyLabel then
-            panel.ignoreEmptyLabel = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-            panel.ignoreEmptyLabel:SetPoint("TOPLEFT", 16, listBaseY)
-            panel.ignoreEmptyLabel:SetText("No spells are currently ignored.")
+        if not subPanel.ignoreEmptyLabel then
+            subPanel.ignoreEmptyLabel = subPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            subPanel.ignoreEmptyLabel:SetPoint("TOPLEFT", 16, listBaseY)
+            subPanel.ignoreEmptyLabel:SetText("No spells are currently ignored.")
         end
-        panel.ignoreEmptyLabel:SetShown(rowIdx == 0)
+        subPanel.ignoreEmptyLabel:SetShown(rowIdx == 0)
+
+        -- Set sub-panel height so the canvas layout knows the full scroll extent.
+        -- abs(listBaseY) = distance from top to first row; rowIdx * 26 = list height;
+        -- 56 = bottom padding that keeps the footer clear.
+        subPanel:SetHeight(math.abs(listBaseY) + math.max(rowIdx * 26, 20) + 56)
     end
 
-    -- Refresh all controls when the panel opens (existing + new ignore widgets)
-    panel:SetScript("OnShow", function()
-        for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
-        for _, ref in ipairs(sliderRefs) do
-            ref.slider:SetValue(ref.getValue())
-            ref.labelStr:SetText(ref.label .. ": " .. ref.getValue())
-        end
+    subPanel:SetScript("OnShow", function()
         PopulateRotationDropdown()
         RefreshIgnoreList()
     end)
 
-    -- Footer hint (fixed offset below the ignore list area; canvas scrolls in 10.x+)
-    local hint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    hint:SetPoint("TOPLEFT", 16, listBaseY - 180)
-    hint:SetText("/hkl for quick commands  ·  Drag the icon in-game to reposition  ·  /hkl lock to prevent accidental moves")
-
-    settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "HekiLight")
-    Settings.RegisterAddOnCategory(settingsCategory)
+    local ignoreCategory = Settings.RegisterCanvasLayoutSubcategory(parentCategory, subPanel, "Ignored Spells")
+    Settings.RegisterAddOnCategory(ignoreCategory)
 end
 
 -- ── Spell Suggestion Detection ───────────────────────────────────────────────

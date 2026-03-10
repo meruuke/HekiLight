@@ -13,7 +13,7 @@ Everything lives in `HekiLight.lua`. The file is structured in clearly labelled 
 ### Startup flow
 
 ```
-ADDON_LOADED → InitDB() → BuildUI() → BuildMinimapButton() → BuildSettingsPanel()
+ADDON_LOADED → InitDB() → BuildUI() → BuildMinimapButton() → BuildSettingsPanel() → BuildIgnorePanel()
 PLAYER_LOGIN → RebuildSlotBindings() → Refresh()
 ```
 
@@ -54,7 +54,9 @@ All runtime settings are read/written through `db.*`.
 - **`display` frame drives everything** — the root `BackdropTemplate` frame hosts all child widgets (icon, cooldown, range overlay, keybind label). Its `OnUpdate` script is the poll loop.
 - **Keybind lookup path**: `spellID → FindSpellActionButtons() → filter out SBA slots → SLOT_BINDINGS[slot] → GetBindingKey() → FormatKey()`
 - **Slash command pattern**: simple `if/elseif` chains on `strtrim(msg:lower())`. Bulk hide/show toggles are data-driven via `ALWAYS_HIDE_FLAGS` and `SHOW_FLAGS` tables.
-- **Settings panel**: uses `Settings.RegisterCanvasLayoutCategory` (10.x+ API). Sliders are built manually with `BackdropTemplate` — `OptionsSliderTemplate` is deprecated and not used. Columns are tracked with a simple `cols` table that advances `y` after each widget.
+- **Settings panels**: two canvas layout categories registered via `Settings.RegisterCanvasLayoutCategory` / `Settings.RegisterCanvasLayoutSubcategory` (10.x+ API).
+  - `BuildSettingsPanel()` — main "HekiLight" category; two-column layout (Appearance / Display / Minimap / Hide-Show). Panel height set once from column extent. Registers `settingsCategory` then calls `BuildIgnorePanel(settingsCategory)`.
+  - `BuildIgnorePanel(parentCategory)` — "Ignored Spells" sub-category; registered as a child of the main category. Rows parented directly to `subPanel`; `RefreshIgnoreList` calls `subPanel:SetHeight(...)` so the canvas measures the correct scroll extent. Sliders are built manually with `BackdropTemplate` — `OptionsSliderTemplate` is deprecated and not used. Columns are tracked with a simple `cols` table that advances `y` after each widget.
 - **Proc-glow**: driven by `SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE` events and `C_SpellActivationOverlay.IsSpellOverlayed()`; animates the backdrop border from gray → gold using `C_Timer.NewTicker`.
 - **Minimap button**: positioned at a configurable angle (degrees) at a fixed 80px radius from `Minimap:GetCenter()`. Drag recalculates angle with `math.atan2`.
 
@@ -70,5 +72,6 @@ C_ActionBar.IsActionInRange(slotID)                -- range check
 C_Spell.GetSpellInfo(spellID)                      -- icon ID, spell name
 C_Spell.GetSpellCooldown(spellID)                  -- cooldown (pcall-guarded)
 C_SpellActivationOverlay.IsSpellOverlayed(spellID) -- proc glow active?
-Settings.RegisterCanvasLayoutCategory(panel, name) -- settings panel registration
+Settings.RegisterCanvasLayoutCategory(panel, name)           -- main settings category
+Settings.RegisterCanvasLayoutSubcategory(parent, panel, name) -- child category (Ignored Spells)
 ```
