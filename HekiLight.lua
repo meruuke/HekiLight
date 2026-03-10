@@ -573,7 +573,7 @@ local function BuildSettingsPanel()
             for _, sid in ipairs(rotSpells) do
                 local si = C_Spell.GetSpellInfo(sid)
                 if si then
-                    local ignored      = db.ignoredSpells[sid] == true
+                    local ignored      = db.ignoredSpells[sid]
                     local info         = UIDropDownMenu_CreateInfo()
                     info.text          = (ignored and "|cff888888" or "")
                                         .. si.name
@@ -583,9 +583,11 @@ local function BuildSettingsPanel()
                     info.disabled      = ignored
                     local capturedSid  = sid
                     local capturedName = si.name
-                    info.func = function()
-                        selectedIgnoreSpellID = capturedSid
-                        UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
+                    if not ignored then
+                        info.func = function()
+                            selectedIgnoreSpellID = capturedSid
+                            UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
+                        end
                     end
                     UIDropDownMenu_AddButton(info, level)
                 end
@@ -1295,6 +1297,7 @@ SlashCmdList["HEKILIGHT"] = function(msg)
             local si = C_Spell.GetSpellInfo(sid)
             local name = si and si.name or tostring(sid)
             print("|cff88ccffHekiLight:|r " .. name .. " [" .. sid .. "] will no longer appear in the secondary list.")
+            Refresh()
         else
             print("|cff88ccffHekiLight:|r Usage: /hkl ignore <spellID>")
         end
@@ -1307,6 +1310,7 @@ SlashCmdList["HEKILIGHT"] = function(msg)
             local si = C_Spell.GetSpellInfo(sid)
             local name = si and si.name or tostring(sid)
             print("|cff88ccffHekiLight:|r " .. name .. " [" .. sid .. "] restored to the secondary list.")
+            Refresh()
         else
             print("|cff88ccffHekiLight:|r Usage: /hkl unignore <spellID>")
         end
