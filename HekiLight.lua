@@ -66,7 +66,7 @@ local MAX_SLOTS = 5  -- maximum number of icon slots (always created; extras hid
 -- Pre-allocated suggestion queue — reused every poll to avoid per-frame table allocation.
 -- GetSuggestionQueue wipes and repopulates these in-place; callers index queue[1..n].
 local queueCache = {}
-for i = 1, MAX_SLOTS do queueCache[i] = { spellID = nil, realSlotID = nil } end
+for i = 1, MAX_SLOTS do queueCache[i] = { spellID = nil, realSlotID = nil, onCooldown = false } end
 local queueCount = 0  -- number of valid entries populated in the last GetSuggestionQueue call
 
 -- ── Frames ───────────────────────────────────────────────────────────────────
@@ -716,6 +716,21 @@ local function IsSpellAvailable(spellID)
     return available
 end
 
+-- Returns true when spellID is currently on cooldown (or inside the post-cast
+-- grace window). Clears the grace-period entry once the spell is truly off CD.
+-- Also catches inherent CDs on spells that haven't been cast this session.
+local function IsSpellOnCooldown(sid)
+    if recentlyCastSpells[sid] then
+        local pastGrace = (GetTime() - recentlyCastSpells[sid]) > MIN_CD_GRACE
+        if pastGrace and IsSpellAvailable(sid) then
+            recentlyCastSpells[sid] = nil
+            return false
+        end
+        return true
+    end
+    return not IsSpellAvailable(sid)
+end
+
 
 local function IsAssistActive()
     return C_ActionBar.HasAssistedCombatActionButtons()
@@ -817,8 +832,9 @@ end
 local function GetSuggestionQueue(n)
     -- Wipe entries from the previous call so stale spellIDs are never read.
     for i = 1, queueCount do
-        queueCache[i].spellID   = nil
+        queueCache[i].spellID    = nil
         queueCache[i].realSlotID = nil
+        queueCache[i].onCooldown = false
     end
     queueCount = 0
 
@@ -830,22 +846,29 @@ local function GetSuggestionQueue(n)
     if n > 1 and C_AssistedCombat.GetRotationSpells then
         local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
         if ok and rotSpells then
+            -- Pass 1: off-cooldown spells fill slots first (high priority)
             for _, sid in ipairs(rotSpells) do
+                if queueCount >= n then break end
                 if sid ~= primaryID and not db.ignoredSpells[sid] and IsPlayerSpell(sid) then
-                    local onCooldown = false
-                    if recentlyCastSpells[sid] then
-                        local pastGrace = (GetTime() - recentlyCastSpells[sid]) > MIN_CD_GRACE
-                        if pastGrace and IsSpellAvailable(sid) then
-                            recentlyCastSpells[sid] = nil  -- truly off CD, stop tracking
-                        else
-                            onCooldown = true              -- in grace period or still on CD
-                        end
-                    end
-                    if not onCooldown then
+                    if not IsSpellOnCooldown(sid) then
                         queueCount = queueCount + 1
-                        queueCache[queueCount].spellID   = sid
+                        queueCache[queueCount].spellID    = sid
                         queueCache[queueCount].realSlotID = GetRealSlot(sid)
-                        if queueCount >= n then break end
+                        queueCache[queueCount].onCooldown = false
+                    end
+                end
+            end
+            -- Pass 2: on-cooldown spells fill any remaining slots (low priority, greyed out)
+            if queueCount < n then
+                for _, sid in ipairs(rotSpells) do
+                    if queueCount >= n then break end
+                    if sid ~= primaryID and not db.ignoredSpells[sid] and IsPlayerSpell(sid) then
+                        if IsSpellOnCooldown(sid) then
+                            queueCount = queueCount + 1
+                            queueCache[queueCount].spellID    = sid
+                            queueCache[queueCount].realSlotID = GetRealSlot(sid)
+                            queueCache[queueCount].onCooldown = true
+                        end
                     end
                 end
             end
@@ -958,11 +981,14 @@ local function Refresh()
             local si = (i == 1) and primaryInfo or C_Spell.GetSpellInfo(entry.spellID)
             if si and si.iconID then
                 slot.iconTexture:SetTexture(si.iconID)
+                slot.iconTexture:SetDesaturated(i > 1 and entry.onCooldown)
                 slot.frame:Show()
             else
+                slot.iconTexture:SetDesaturated(false)
                 slot.frame:Hide()
             end
         else
+            slot.iconTexture:SetDesaturated(false)
             slot.frame:Hide()
         end
     end
