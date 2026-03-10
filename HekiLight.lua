@@ -47,13 +47,6 @@ local DEFAULTS = {
 
 local db            -- points at HekiLightDB after ADDON_LOADED
 local inCombat    = false
--- spellID → GetTime() when cast.  Only spells in this table are checked for
--- cooldowns; spells never cast are trusted to the SBA engine.
--- Stored as a timestamp so we can enforce a post-cast grace period that
--- outlasts the GCD-to-real-CD transition window (engine briefly reports
--- duration=0 at GCD end before the real cooldown value is applied).
-local recentlyCastSpells = {}
-local MIN_CD_GRACE = 2.0  -- seconds after a cast before we trust duration==0 as "truly off CD"
 local inCinematic = false  -- true while a cut-scene or pre-rendered movie is playing
 local elapsed     = 0
 local rangeTicker   -- C_Timer ticker for range overlay pulse animation
@@ -716,21 +709,20 @@ local function IsSpellAvailable(spellID)
     return available
 end
 
--- Returns true when spellID is currently on cooldown (or inside the post-cast
--- grace window). Only tracks spells in recentlyCastSpells — untracked spells
--- are trusted to the engine. We must NOT fall back to IsSpellAvailable() for
--- untracked spells: the GCD sets duration > 0 for all spells, which would
--- incorrectly mark every rotation spell as on-CD every frame in combat.
+-- Returns true when spellID has an active cooldown longer than the GCD.
+-- The GCD is ≤1.5s; real spell CDs are always longer. Checking duration
+-- directly avoids false-positives from the GCD affecting all spells in
+-- active combat (a cast-history approach was tried and caused every
+-- rotation spell to appear "on CD" during the 2s post-cast grace window).
 local function IsSpellOnCooldown(sid)
-    if recentlyCastSpells[sid] then
-        local pastGrace = (GetTime() - recentlyCastSpells[sid]) > MIN_CD_GRACE
-        if pastGrace and IsSpellAvailable(sid) then
-            recentlyCastSpells[sid] = nil
-            return false
+    local onCD = false
+    pcall(function()
+        local cd = C_Spell.GetSpellCooldown(sid)
+        if cd and cd.duration > 1.5 then
+            onCD = true
         end
-        return true
-    end
-    return false
+    end)
+    return onCD
 end
 
 
@@ -826,11 +818,8 @@ end
 -- rotation queue.  Slot 1 is always the active SBA suggestion (GetNextCastSpell).
 -- Slots 2..n come from C_AssistedCombat.GetRotationSpells() (Midnight 12.0+).
 --
--- Cooldown filter: only spells the player has actually cast (tracked in
--- recentlyCastSpells) are checked via IsSpellAvailable.  Spells never cast are
--- shown as-is — the SBA engine is trusted to include them appropriately.
--- Once a tracked spell is detected as available again, it is removed from the
--- set so it flows freely on future polls.
+-- Two-pass fill: pass 1 adds spells with no real cooldown (duration ≤1.5s),
+-- pass 2 fills remaining slots with on-CD spells (shown greyed out).
 local function GetSuggestionQueue(n)
     -- Wipe entries from the previous call so stale spellIDs are never read.
     for i = 1, queueCount do
@@ -1095,7 +1084,6 @@ events:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")  -- mount / dismount
 events:RegisterEvent("PLAYER_TARGET_CHANGED")         -- target swapped or cleared
 events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")  -- proc glow appears
 events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")  -- proc glow fades
-events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")             -- track casts for CD filter
 
 events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
@@ -1166,14 +1154,6 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         -- A proc glow faded — if it was our current suggestion, stop pulsing
         if arg1 == currentSuggestionID then
             StopGlowPulse()
-        end
-
-    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-        -- arg1 = unit, arg2 = castGUID, arg3 = spellID
-        -- Record every player cast so the cooldown filter knows which spells
-        -- to check.  Spells never cast are always shown (trusted to the engine).
-        if arg1 == "player" and arg3 then
-            recentlyCastSpells[arg3] = GetTime()
         end
     end
 end)
