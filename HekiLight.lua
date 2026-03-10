@@ -3,9 +3,11 @@
 -- current suggestion as a movable, skinnable icon overlay.
 --
 -- Key APIs used (Midnight 12.0+):
---   C_ActionBar.HasAssistedCombatActionButtons() → bool
---   C_ActionBar.FindAssistedCombatActionButtons() → slotID[]
---   C_ActionBar.IsAssistedCombatAction(slotID)   → bool
+--   C_ActionBar.HasAssistedCombatActionButtons()     → bool
+--   C_ActionBar.FindAssistedCombatActionButtons()    → slotID[]
+--   C_ActionBar.IsAssistedCombatAction(slotID)       → bool
+--   C_AssistedCombat.GetNextCastSpell(false)         → spellID  (primary suggestion)
+--   C_AssistedCombat.GetRotationSpells()             → {spellID, ...}  (full queue)
 
 local ADDON_NAME = "HekiLight"
 local DEBUG = false  -- toggle with /hkl debug
@@ -20,6 +22,8 @@ local DEFAULTS = {
     x              = 0,
     y              = 0,       -- screen center; use /hkl unlock to reposition
     iconSize       = 64,
+    iconSpacing    = 8,       -- pixel gap between icon slots
+    numSuggestions = 3,       -- number of spell icon slots to display (1–5)
     scale          = 1.0,
     locked         = false,
     showKeybind    = true,
@@ -48,17 +52,14 @@ local rangeTicker   -- C_Timer ticker for range overlay pulse animation
 local glowTicker    -- C_Timer ticker for proc-glow border pulse animation
 local isGlowActive  = false
 local currentSuggestionID = nil  -- spellID currently displayed (used to filter glow events)
+local slots    = {}  -- per-slot tables; populated by BuildSlots(); slots[1] is the primary slot
+local MAX_SLOTS = 5  -- maximum number of icon slots (always created; extras hidden)
 
 -- ── Frames ───────────────────────────────────────────────────────────────────
 
--- Root display frame (BackdropTemplate enables SetBackdrop for border support)
-local display = CreateFrame("Frame", "HekiLightDisplay", UIParent, "BackdropTemplate")
-
--- Child widgets (created in BuildUI)
-local iconTexture
-local cooldownFrame
-local keybindText
-local rangeOverlay  -- red tint when out of range
+-- Root container frame: handles positioning, dragging, and show/hide.
+-- Individual slot sub-frames are created inside BuildSlots().
+local display = CreateFrame("Frame", "HekiLightDisplay", UIParent)
 
 -- ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -151,36 +152,36 @@ end
 
 -- ── UI Construction ───────────────────────────────────────────────────────────
 
-local function BuildUI()
+-- Resize the container and reposition every slot sub-frame.
+-- Call whenever iconSize, iconSpacing, or numSuggestions changes.
+local function ApplySlotLayout()
+    local n    = db.numSuggestions
     local size = db.iconSize
+    local gap  = db.iconSpacing
+    display:SetSize(n * size + (n - 1) * gap, size)
+    for i = 1, MAX_SLOTS do
+        if slots[i] then
+            slots[i].frame:SetSize(size, size)
+            slots[i].frame:SetPoint("TOPLEFT", display, "TOPLEFT", (i - 1) * (size + gap), 0)
+        end
+    end
+end
 
-    display:SetSize(size, size)
+local function BuildSlots()
     display:SetScale(db.scale)
-    display:SetFrameStrata("HIGH")   -- sit above action bars (MEDIUM)
-    display:SetFrameLevel(10)        -- reasonable level; 100 was unnecessarily high
+    display:SetFrameStrata("HIGH")
+    display:SetFrameLevel(10)
     display:SetClampedToScreen(true)
     ApplyPosition()
 
-    -- Backdrop: dark background + tooltip-style border (edgeSize 16 matches UI-Tooltip-Border tile size)
-    display:SetBackdrop({
-        bgFile   = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile     = true,
-        tileSize = 16,
-        edgeSize = 16,
-        insets   = { left = 4, right = 4, top = 4, bottom = 4 },
-    })
-    display:SetBackdropColor(0, 0, 0, 0.7)
-    display:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.9)
-
-    -- Play a subtle sound when the icon first appears in combat
+    -- Play a subtle sound when the container first appears in combat
     display:SetScript("OnShow", function()
         if db and db.sounds then
             PlaySoundFile("Interface\\Buttons\\UI-CheckBox-Up.wav", "SFX")
         end
     end)
 
-    -- Drag support
+    -- Drag support on the container
     display:SetMovable(true)
     display:EnableMouse(not db.locked)
     display:RegisterForDrag("LeftButton")
@@ -194,43 +195,68 @@ local function BuildUI()
         db.y = math.floor(y + 0.5)
     end)
 
-    -- Spell icon (ARTWORK so the backdrop border in BORDER layer renders above it)
-    iconTexture = display:CreateTexture(nil, "ARTWORK")
-    iconTexture:SetAllPoints(display)
-    iconTexture:SetTexCoord(0.08, 0.92, 0.08, 0.92)  -- trim default icon border
+    -- Create MAX_SLOTS slot sub-frames upfront; only numSuggestions are shown.
+    wipe(slots)
+    for i = 1, MAX_SLOTS do
+        local slot = {}
 
-    -- Cooldown spiral
-    cooldownFrame = CreateFrame("Cooldown", "HekiLightCooldown", display, "CooldownFrameTemplate")
-    cooldownFrame:SetAllPoints(display)
-    cooldownFrame:SetDrawEdge(true)
-    cooldownFrame:SetHideCountdownNumbers(false)
+        slot.frame = CreateFrame("Frame", nil, display, "BackdropTemplate")
+        slot.frame:SetFrameLevel(display:GetFrameLevel() + 1)
+        slot.frame:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile     = true,
+            tileSize = 16,
+            edgeSize = 16,
+            insets   = { left = 4, right = 4, top = 4, bottom = 4 },
+        })
+        slot.frame:SetBackdropColor(0, 0, 0, 0.7)
+        slot.frame:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.9)
 
-    -- Out-of-range red tint — pulses so it's impossible to miss
-    rangeOverlay = display:CreateTexture(nil, "OVERLAY")
-    rangeOverlay:SetAllPoints(display)
-    rangeOverlay:SetColorTexture(1, 0, 0, 0.35)
-    rangeOverlay:Hide()
-    rangeOverlay:SetScript("OnShow", function()
-        local alpha, dir = 0.15, 1
-        rangeTicker = C_Timer.NewTicker(0.05, function()
-            alpha = alpha + dir * 0.04
-            if alpha >= 0.5 then dir = -1 elseif alpha <= 0.1 then dir = 1 end
-            rangeOverlay:SetAlpha(alpha)
-        end)
-    end)
-    rangeOverlay:SetScript("OnHide", function()
-        if rangeTicker then rangeTicker:Cancel(); rangeTicker = nil end
-        -- alpha resets automatically when frame is shown again via OnShow
-    end)
+        -- Spell icon (ARTWORK so the backdrop border in BORDER layer renders above it)
+        slot.iconTexture = slot.frame:CreateTexture(nil, "ARTWORK")
+        slot.iconTexture:SetAllPoints(slot.frame)
+        slot.iconTexture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-    -- Keybind label — NumberFontNormal is the same font Blizzard uses on action buttons
-    keybindText = display:CreateFontString(nil, "OVERLAY")
-    keybindText:SetFontObject(NumberFontNormal)
-    keybindText:SetPoint("BOTTOMRIGHT", display, "BOTTOMRIGHT", -2, 3)
-    keybindText:SetTextColor(1, 1, 1, 1)
+        if i == 1 then
+            -- Cooldown spiral (primary slot only)
+            slot.cooldownFrame = CreateFrame("Cooldown", "HekiLightCooldown", slot.frame, "CooldownFrameTemplate")
+            slot.cooldownFrame:SetAllPoints(slot.frame)
+            slot.cooldownFrame:SetDrawEdge(true)
+            slot.cooldownFrame:SetHideCountdownNumbers(false)
 
+            -- Out-of-range red tint (primary slot only) — pulses so it's impossible to miss
+            local rangeOvl = slot.frame:CreateTexture(nil, "OVERLAY")
+            rangeOvl:SetAllPoints(slot.frame)
+            rangeOvl:SetColorTexture(1, 0, 0, 0.35)
+            rangeOvl:Hide()
+            rangeOvl:SetScript("OnShow", function()
+                local alpha, dir = 0.15, 1
+                rangeTicker = C_Timer.NewTicker(0.05, function()
+                    alpha = alpha + dir * 0.04
+                    if alpha >= 0.5 then dir = -1 elseif alpha <= 0.1 then dir = 1 end
+                    rangeOvl:SetAlpha(alpha)
+                end)
+            end)
+            rangeOvl:SetScript("OnHide", function()
+                if rangeTicker then rangeTicker:Cancel(); rangeTicker = nil end
+            end)
+            slot.rangeOverlay = rangeOvl
+
+            -- Keybind label — NumberFontNormal is the same font Blizzard uses on action buttons
+            slot.keybindText = slot.frame:CreateFontString(nil, "OVERLAY")
+            slot.keybindText:SetFontObject(NumberFontNormal)
+            slot.keybindText:SetPoint("BOTTOMRIGHT", slot.frame, "BOTTOMRIGHT", -2, 3)
+            slot.keybindText:SetTextColor(1, 1, 1, 1)
+        end
+
+        slot.frame:Hide()
+        slots[i] = slot
+    end
+
+    ApplySlotLayout()
     display:Hide()
-    Log("BuildUI complete, size=", size, "strata=HIGH level=10")
+    Log("BuildSlots complete, maxSlots=", MAX_SLOTS, "showing=", db.numSuggestions)
 end
 
 -- ── Minimap Button ────────────────────────────────────────────────────────────
@@ -408,17 +434,23 @@ local function BuildSettingsPanel()
         function(v) db.scale = v; display:SetScale(v) end)
     AddSlider("Icon Size", 16, 256, 8,
         function() return db.iconSize end,
-        function(v) db.iconSize = v; display:SetSize(v, v) end)
+        function(v) db.iconSize = v; ApplySlotLayout(); Refresh() end)
+    AddSlider("Suggestions", 1, 5, 1,
+        function() return db.numSuggestions end,
+        function(v) db.numSuggestions = v; ApplySlotLayout(); Refresh() end)
+    AddSlider("Icon Spacing", 0, 32, 2,
+        function() return db.iconSpacing end,
+        function(v) db.iconSpacing = v; ApplySlotLayout(); Refresh() end)
 
     SectionHeader("Display Options")
     AddCheckbox("Show keybind text",
         "Show the keybind for the suggested spell in the corner of the icon.",
         function() return db.showKeybind end,
-        function(v) db.showKeybind = v; if not v then keybindText:Hide() end end)
+        function(v) db.showKeybind = v; if not v and slots[1] and slots[1].keybindText then slots[1].keybindText:Hide() end end)
     AddCheckbox("Show out-of-range tint",
         "Pulse the icon red when the suggested spell cannot reach your target.",
         function() return db.showOutOfRange end,
-        function(v) db.showOutOfRange = v; if not v then rangeOverlay:Hide() end end)
+        function(v) db.showOutOfRange = v; if not v and slots[1] and slots[1].rangeOverlay then slots[1].rangeOverlay:Hide() end end)
     AddCheckbox("Proc glow border",
         "Pulse the icon border gold when the suggested spell has an active proc glow.",
         function() return db.showProcGlow end,
@@ -426,7 +458,7 @@ local function BuildSettingsPanel()
     AddCheckbox("Show cooldown spiral",
         "Display a cooldown sweep on the icon. May cause UI taint — use with caution.",
         function() return db.showCooldown end,
-        function(v) db.showCooldown = v; if not v then cooldownFrame:Hide() end end)
+        function(v) db.showCooldown = v; if not v and slots[1] and slots[1].cooldownFrame then slots[1].cooldownFrame:Hide() end end)
     AddCheckbox("Play sounds",
         "Play a subtle click when the icon appears as you enter combat.",
         function() return db.sounds end,
@@ -559,6 +591,44 @@ local function GetActiveSuggestion()
     return spellID, realSlotID
 end
 
+-- Returns the first real (non-SBA) action bar slot for a spellID.
+-- Used for range checks and keybind lookups on secondary rotation spells.
+local function GetRealSlot(spellID)
+    local slotList = C_ActionBar.FindSpellActionButtons(spellID)
+    if slotList then
+        for _, slot in ipairs(slotList) do
+            if not C_ActionBar.IsAssistedCombatAction(slot) then
+                return slot
+            end
+        end
+    end
+    return nil
+end
+
+-- Returns up to n { spellID, realSlotID } entries representing the current
+-- rotation queue.  Slot 1 is always the active SBA suggestion (GetNextCastSpell).
+-- Slots 2..n come from C_AssistedCombat.GetRotationSpells() (Midnight 12.0+),
+-- with the primary spell skipped to avoid duplication.
+local function GetSuggestionQueue(n)
+    local queue = {}
+    local primaryID, primarySlot = GetActiveSuggestion()
+    queue[1] = { spellID = primaryID, realSlotID = primarySlot }
+
+    if n > 1 and C_AssistedCombat.GetRotationSpells then
+        local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
+        if ok and rotSpells then
+            for _, sid in ipairs(rotSpells) do
+                if sid ~= primaryID then
+                    queue[#queue + 1] = { spellID = sid, realSlotID = GetRealSlot(sid) }
+                    if #queue >= n then break end
+                end
+            end
+        end
+    end
+
+    return queue
+end
+
 -- ── Core Update Logic ─────────────────────────────────────────────────────────
 
 -- ── Proc-Glow Border Pulse ────────────────────────────────────────────────────
@@ -566,8 +636,10 @@ end
 local function StopGlowPulse()
     if glowTicker then glowTicker:Cancel(); glowTicker = nil end
     isGlowActive = false
-    -- Restore normal border color
-    if display then display:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.9) end
+    -- Restore normal border color on the primary slot
+    if slots[1] and slots[1].frame then
+        slots[1].frame:SetBackdropBorderColor(0.5, 0.5, 0.5, 0.9)
+    end
 end
 
 local function StartGlowPulse()
@@ -578,12 +650,14 @@ local function StartGlowPulse()
         t = t + dir * 0.06
         if t >= 1 then t = 1; dir = -1
         elseif t <= 0 then t = 0; dir = 1 end
-        -- Lerp border from gray (0.5,0.5,0.5) → gold (1,0.85,0)
-        display:SetBackdropBorderColor(
-            0.5 + 0.5  * t,
-            0.5 + 0.35 * t,
-            0.5 - 0.5  * t,
-            0.9)
+        -- Lerp border from gray (0.5,0.5,0.5) → gold (1,0.85,0) on the primary slot
+        if slots[1] and slots[1].frame then
+            slots[1].frame:SetBackdropBorderColor(
+                0.5 + 0.5  * t,
+                0.5 + 0.35 * t,
+                0.5 - 0.5  * t,
+                0.9)
+        end
     end)
 end
 
@@ -618,9 +692,12 @@ local function ShouldShow()
 end
 
 local function Refresh()
-    local spellID, realSlotID = GetActiveSuggestion()
+    if #slots == 0 then return end  -- BuildSlots not yet called
 
-    if not spellID then
+    local queue   = GetSuggestionQueue(db.numSuggestions)
+    local primary = queue[1]
+
+    if not primary or not primary.spellID then
         Log("No active suggestion — hiding display")
         currentSuggestionID = nil
         StopGlowPulse()
@@ -628,70 +705,93 @@ local function Refresh()
         return
     end
 
-    -- Texture from spell info (iconID is a numeric file ID accepted by SetTexture)
-    local spellInfo = C_Spell.GetSpellInfo(spellID)
-    if not spellInfo or not spellInfo.iconID then
-        Log("No spell info for", spellID, "— hiding display")
+    local primaryInfo = C_Spell.GetSpellInfo(primary.spellID)
+    if not primaryInfo or not primaryInfo.iconID then
+        Log("No spell info for", primary.spellID, "— hiding display")
         currentSuggestionID = nil
         StopGlowPulse()
         display:Hide()
         return
     end
-    Log("Showing spellID", spellID, "iconID", spellInfo.iconID, "realSlot", tostring(realSlotID))
 
-    -- Icon
-    iconTexture:SetTexture(spellInfo.iconID)
-
-    -- Proc-glow border pulse (check after icon is confirmed valid)
-    currentSuggestionID = spellID
-    UpdateGlowState(spellID)
-
-    -- Cooldown — use C_Spell API (no slot needed; taint guard still applies)
-    if db.showCooldown then
-        local ok = pcall(function()
-            local cd = C_Spell.GetSpellCooldown(spellID)
-            local startTime = cd and cd.startTime or 0
-            if startTime > 0 then
-                cooldownFrame:SetCooldown(startTime, cd.duration or 0)
-                cooldownFrame:Show()
-            else
-                cooldownFrame:Hide()
-            end
-        end)
-        if not ok then cooldownFrame:Hide() end
-    else
-        cooldownFrame:Hide()
-    end
-
-    -- Range indicator — requires a real action bar slot; hide if none found
-    if db.showOutOfRange and realSlotID then
-        local inRange = C_ActionBar.IsActionInRange(realSlotID)
-        -- inRange: true = in range, false = out of range, nil = no range requirement
-        rangeOverlay:SetShown(inRange == false)
-    else
-        rangeOverlay:Hide()
-    end
-
-    -- Keybind
-    if db.showKeybind then
-        keybindText:SetText(GetSpellKeybind(spellID))
-        keybindText:Show()
-    else
-        keybindText:Hide()
-    end
-
-    -- All content ready — only show if suppression conditions allow it
-    local ok, reason = ShouldShow()
-    if ok then
-        display:Show()
-        Log("display:Show() — IsShown:", display:IsShown(),
-            "x:", db.x, "y:", db.y)
-    else
+    -- Check suppression before doing any rendering work
+    local showOk, reason = ShouldShow()
+    if not showOk then
         currentSuggestionID = nil
         StopGlowPulse()
         display:Hide()
         Log("display suppressed — reason:", reason)
+        return
     end
+
+    -- Update each slot's icon texture
+    for i = 1, db.numSuggestions do
+        local slot  = slots[i]
+        local entry = queue[i]
+        if entry and entry.spellID then
+            local si = (i == 1) and primaryInfo or C_Spell.GetSpellInfo(entry.spellID)
+            if si and si.iconID then
+                slot.iconTexture:SetTexture(si.iconID)
+                slot.frame:Show()
+            else
+                slot.frame:Hide()
+            end
+        else
+            slot.frame:Hide()
+        end
+    end
+
+    -- Hide slots beyond numSuggestions (guards against numSuggestions being reduced)
+    for i = db.numSuggestions + 1, MAX_SLOTS do
+        if slots[i] then slots[i].frame:Hide() end
+    end
+
+    -- Primary-slot decorations (slot 1 only)
+    local s1    = slots[1]
+    local sid   = primary.spellID
+    local rslot = primary.realSlotID
+    Log("Showing spellID", sid, "iconID", primaryInfo.iconID, "realSlot", tostring(rslot))
+
+    currentSuggestionID = sid
+    UpdateGlowState(sid)
+
+    -- Cooldown — use C_Spell API (no slot needed; taint guard still applies)
+    if db.showCooldown and s1.cooldownFrame then
+        local ok = pcall(function()
+            local cd = C_Spell.GetSpellCooldown(sid)
+            local startTime = cd and cd.startTime or 0
+            if startTime > 0 then
+                s1.cooldownFrame:SetCooldown(startTime, cd.duration or 0)
+                s1.cooldownFrame:Show()
+            else
+                s1.cooldownFrame:Hide()
+            end
+        end)
+        if not ok then s1.cooldownFrame:Hide() end
+    elseif s1.cooldownFrame then
+        s1.cooldownFrame:Hide()
+    end
+
+    -- Range indicator — requires a real action bar slot; hide if none found
+    if db.showOutOfRange and rslot and s1.rangeOverlay then
+        local inRange = C_ActionBar.IsActionInRange(rslot)
+        -- inRange: true = in range, false = out of range, nil = no range requirement
+        s1.rangeOverlay:SetShown(inRange == false)
+    elseif s1.rangeOverlay then
+        s1.rangeOverlay:Hide()
+    end
+
+    -- Keybind
+    if db.showKeybind and s1.keybindText then
+        s1.keybindText:SetText(GetSpellKeybind(sid))
+        s1.keybindText:Show()
+    elseif s1.keybindText then
+        s1.keybindText:Hide()
+    end
+
+    display:Show()
+    Log("display:Show() — numSuggestions:", db.numSuggestions,
+        "x:", db.x, "y:", db.y)
 end
 
 -- ── Combat Polling ────────────────────────────────────────────────────────────
@@ -746,7 +846,7 @@ events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")  -- proc glow fades
 events:SetScript("OnEvent", function(_, event, arg1)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
         InitDB()
-        BuildUI()
+        BuildSlots()
         BuildMinimapButton()
         BuildSettingsPanel()
 
@@ -830,23 +930,25 @@ local SHOW_FLAGS = {
 
 local function PrintHelp()
     print("|cff88ccffHekiLight|r commands:")
-    print("  /hkl lock              lock display position")
-    print("  /hkl unlock            unlock display position")
-    print("  /hkl reset             reset position to default")
-    print("  /hkl scale <0.2–3.0>   set display scale")
-    print("  /hkl size  <16–256>    set icon size in pixels")
-    print("  /hkl poll  <seconds>   set poll rate (default 0.05)")
-    print("  /hkl keybind on|off    toggle keybind text")
-    print("  /hkl range on|off      toggle out-of-range tint")
-    print("  /hkl procglow on|off   toggle proc glow border pulse")
-    print("  /hkl sounds on|off     toggle combat sounds")
-    print("  /hkl minimap on|off    toggle minimap button")
+    print("  /hkl lock                  lock display position")
+    print("  /hkl unlock                unlock display position")
+    print("  /hkl reset                 reset position to default")
+    print("  /hkl scale <0.2–3.0>       set display scale")
+    print("  /hkl size  <16–256>        set icon size in pixels")
+    print("  /hkl suggestions <1–5>     set number of icon slots (default 3)")
+    print("  /hkl spacing <0–32>        set pixel gap between icons")
+    print("  /hkl poll  <seconds>       set poll rate (default 0.05)")
+    print("  /hkl keybind on|off        toggle keybind text")
+    print("  /hkl range on|off          toggle out-of-range tint")
+    print("  /hkl procglow on|off       toggle proc glow border pulse")
+    print("  /hkl sounds on|off         toggle combat sounds")
+    print("  /hkl minimap on|off        toggle minimap button")
     print("  /hkl hide dead on|off      toggle always-hide when dead")
     print("  /hkl hide cinematic on|off toggle always-hide during cinematics")
     print("  /hkl show combat on|off    toggle show when in combat")
     print("  /hkl show target on|off    toggle show when target is attackable")
-    print("  /hkl debug             toggle debug output")
-    print("  /hkl status            print current SBA state")
+    print("  /hkl debug                 toggle debug output")
+    print("  /hkl status                print current SBA state")
 end
 
 SLASH_HEKILIGHT1 = "/hekilight"
@@ -883,10 +985,33 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         local v = tonumber(msg:match("^size%s+(.+)$"))
         if v and v >= 16 and v <= 256 then
             db.iconSize = v
-            display:SetSize(v, v)
+            ApplySlotLayout()
+            Refresh()
             print("|cff88ccffHekiLight:|r Icon size → " .. v .. "px")
         else
             print("|cff88ccffHekiLight:|r Size must be between 16 and 256.")
+        end
+
+    elseif msg:find("^suggestions%s") then
+        local v = tonumber(msg:match("^suggestions%s+(.+)$"))
+        if v and v >= 1 and v <= 5 then
+            db.numSuggestions = math.floor(v)
+            ApplySlotLayout()
+            Refresh()
+            print("|cff88ccffHekiLight:|r Suggestions → " .. db.numSuggestions)
+        else
+            print("|cff88ccffHekiLight:|r Suggestions must be between 1 and 5.")
+        end
+
+    elseif msg:find("^spacing%s") then
+        local v = tonumber(msg:match("^spacing%s+(.+)$"))
+        if v and v >= 0 and v <= 32 then
+            db.iconSpacing = math.floor(v)
+            ApplySlotLayout()
+            Refresh()
+            print("|cff88ccffHekiLight:|r Icon spacing → " .. db.iconSpacing .. "px")
+        else
+            print("|cff88ccffHekiLight:|r Spacing must be between 0 and 32.")
         end
 
     elseif msg:find("^poll%s") then
@@ -905,7 +1030,7 @@ SlashCmdList["HEKILIGHT"] = function(msg)
 
     elseif msg == "keybind off" then
         db.showKeybind = false
-        keybindText:Hide()
+        if slots[1] and slots[1].keybindText then slots[1].keybindText:Hide() end
         print("|cff88ccffHekiLight:|r Keybind text disabled.")
 
     elseif msg == "range on" then
@@ -914,7 +1039,7 @@ SlashCmdList["HEKILIGHT"] = function(msg)
 
     elseif msg == "range off" then
         db.showOutOfRange = false
-        rangeOverlay:Hide()
+        if slots[1] and slots[1].rangeOverlay then slots[1].rangeOverlay:Hide() end
         print("|cff88ccffHekiLight:|r Out-of-range tint disabled.")
 
     elseif msg == "procglow on" then
