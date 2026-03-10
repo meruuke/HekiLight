@@ -63,6 +63,12 @@ local currentSuggestionID = nil  -- spellID currently displayed (used to filter 
 local slots    = {}  -- per-slot tables; populated by BuildSlots(); slots[1] is the primary slot
 local MAX_SLOTS = 5  -- maximum number of icon slots (always created; extras hidden)
 
+-- Pre-allocated suggestion queue — reused every poll to avoid per-frame table allocation.
+-- GetSuggestionQueue wipes and repopulates these in-place; callers index queue[1..n].
+local queueCache = {}
+for i = 1, MAX_SLOTS do queueCache[i] = { spellID = nil, realSlotID = nil } end
+local queueCount = 0  -- number of valid entries populated in the last GetSuggestionQueue call
+
 -- ── Frames ───────────────────────────────────────────────────────────────────
 
 -- Root container frame: handles positioning, dragging, and show/hide.
@@ -143,9 +149,9 @@ end
 --- the spellID from GetActiveSuggestion(), we no longer need to extract it
 --- from the SBA slot first, and the texture-fallback scan is gone.
 local function GetSpellKeybind(spellID)
-    local slots = C_ActionBar.FindSpellActionButtons(spellID)
-    if slots then
-        for _, slot in ipairs(slots) do
+    local actionSlots = C_ActionBar.FindSpellActionButtons(spellID)
+    if actionSlots then
+        for _, slot in ipairs(actionSlots) do
             if not C_ActionBar.IsAssistedCombatAction(slot) then
                 local key = GetSlotKeybind(slot)
                 if key ~= "" then
@@ -343,6 +349,8 @@ end
 
 -- ── Settings Panel ────────────────────────────────────────────────────────────
 
+local BuildIgnorePanel   -- forward declaration; defined after BuildSettingsPanel
+
 local function BuildSettingsPanel()
     local panel = CreateFrame("Frame")
     panel.name = "HekiLight"
@@ -533,7 +541,7 @@ end
 -- call subPanel:SetHeight() with the correct content height each time the list
 -- changes so the canvas knows the scroll extent.
 
-function BuildIgnorePanel(parentCategory)
+BuildIgnorePanel = function(parentCategory)
     local subPanel = CreateFrame("Frame")
     subPanel.name = "Ignored Spells"
     subPanel:SetWidth(620)
@@ -738,9 +746,9 @@ local function GetActiveSuggestion()
         -- Find the SBA slot the old way.
         local sbaSlot
         if C_ActionBar.HasAssistedCombatActionButtons() then
-            local slots = C_ActionBar.FindAssistedCombatActionButtons()
-            if slots and #slots > 0 then
-                sbaSlot = slots[1]
+            local sbaSlots = C_ActionBar.FindAssistedCombatActionButtons()
+            if sbaSlots and #sbaSlots > 0 then
+                sbaSlot = sbaSlots[1]
             else
                 for slot = 1, 120 do
                     if C_ActionBar.IsAssistedCombatAction(slot) then
@@ -768,9 +776,9 @@ local function GetActiveSuggestion()
     -- Find a real (non-SBA) action bar slot for this spell so we can do
     -- range checks and keybind lookups against the player's actual bars.
     local realSlotID
-    local slots = C_ActionBar.FindSpellActionButtons(spellID)
-    if slots then
-        for _, slot in ipairs(slots) do
+    local actionSlots = C_ActionBar.FindSpellActionButtons(spellID)
+    if actionSlots then
+        for _, slot in ipairs(actionSlots) do
             if not C_ActionBar.IsAssistedCombatAction(slot) then
                 realSlotID = slot
                 break
@@ -805,9 +813,17 @@ end
 -- Once a tracked spell is detected as available again, it is removed from the
 -- set so it flows freely on future polls.
 local function GetSuggestionQueue(n)
-    local queue = {}
+    -- Wipe entries from the previous call so stale spellIDs are never read.
+    for i = 1, queueCount do
+        queueCache[i].spellID   = nil
+        queueCache[i].realSlotID = nil
+    end
+    queueCount = 0
+
     local primaryID, primarySlot = GetActiveSuggestion()
-    queue[1] = { spellID = primaryID, realSlotID = primarySlot }
+    queueCount = 1
+    queueCache[1].spellID   = primaryID
+    queueCache[1].realSlotID = primarySlot
 
     if n > 1 and C_AssistedCombat.GetRotationSpells then
         local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
@@ -824,16 +840,17 @@ local function GetSuggestionQueue(n)
                         end
                     end
                     if not onCooldown then
-                        local realSlot = GetRealSlot(sid)
-                        queue[#queue + 1] = { spellID = sid, realSlotID = realSlot }
-                        if #queue >= n then break end
+                        queueCount = queueCount + 1
+                        queueCache[queueCount].spellID   = sid
+                        queueCache[queueCount].realSlotID = GetRealSlot(sid)
+                        if queueCount >= n then break end
                     end
                 end
             end
         end
     end
 
-    return queue
+    return queueCache
 end
 
 -- ── Core Update Logic ─────────────────────────────────────────────────────────
@@ -1032,7 +1049,6 @@ end
 
 local events = CreateFrame("Frame")
 events:RegisterEvent("ADDON_LOADED")
-events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")   -- combat start
 events:RegisterEvent("PLAYER_REGEN_ENABLED")    -- combat end
@@ -1058,7 +1074,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         BuildMinimapButton()
         BuildSettingsPanel()
 
-    elseif event == "PLAYER_LOGIN" or event == "PLAYER_ENTERING_WORLD" then
+    elseif event == "PLAYER_ENTERING_WORLD" then
         RebuildSlotBindings()
         -- Handle logging in while already in combat
         if UnitAffectingCombat("player") then
