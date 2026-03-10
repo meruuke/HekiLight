@@ -1,6 +1,6 @@
 # HekiLight
 
-A lightweight WoW addon (Midnight 12.0+) that reads Blizzard's built-in **Single-Button Rotation Assistant (SBA)** and displays its suggestions as a **movable, skinnable icon strip** — inspired by Hekili.
+A lightweight WoW addon (Midnight 12.0+) that reads Blizzard's built-in **Rotation Assistant** (`C_AssistedCombat`) and displays its suggestions as a **movable, skinnable icon strip** — inspired by Hekili.
 
 ## Why?
 
@@ -68,9 +68,9 @@ These are official Blizzard APIs introduced in Midnight 12.0:
 ```lua
 C_AssistedCombat.GetNextCastSpell(false)         -- primary spell suggestion (highlighted)
 C_AssistedCombat.GetRotationSpells()             -- full rotation spell queue
-C_ActionBar.HasAssistedCombatActionButtons()     -- is SBA active?
-C_ActionBar.FindAssistedCombatActionButtons()    -- action slot IDs the SBA is using
-C_ActionBar.IsAssistedCombatAction(slotID)       -- verify a slot is an SBA slot
+C_ActionBar.HasAssistedCombatActionButtons()     -- is Rotation Assistant active?
+C_ActionBar.FindAssistedCombatActionButtons()    -- action slot IDs the Rotation Assistant is using
+C_ActionBar.IsAssistedCombatAction(slotID)       -- verify a slot belongs to the Rotation Assistant
 C_ActionBar.FindSpellActionButtons(spellID)      -- real bar slots for a spell
 C_ActionBar.IsActionInRange(slotID)              -- range check
 C_Spell.GetSpellInfo(spellID)                    -- icon ID, spell name

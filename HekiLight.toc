@@ -1,8 +1,11 @@
 ## Interface: 120001
 ## Title: HekiLight
-## Notes: Displays Blizzard's built-in rotation assistant (SBA) suggestions as a movable, skinnable icon overlay — inspired by Hekili.
+## Notes: Displays Blizzard's Rotation Assistant suggestions as a movable, skinnable icon overlay — inspired by Hekili.
 ## Author: Meruuke
 ## Version: 0.1.0
+## License: MIT
+## X-Website: https://github.com/mauro-pinheiro/HekiLight
+## X-GitHub: https://github.com/mauro-pinheiro/HekiLight
 ## SavedVariables: HekiLightDB
 ## X-Curse-Project-ID:
 ## X-Wago-ID:
