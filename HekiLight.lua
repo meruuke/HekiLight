@@ -565,6 +565,7 @@ BuildIgnorePanel = function(parentCategory)
 
     local selectedIgnoreSpellID = nil
     local rowPool = {}
+    local rotSpellCache = {}   -- pre-built entries for the dropdown
     local PopulateRotationDropdown
     local RefreshIgnoreList
 
@@ -601,38 +602,51 @@ BuildIgnorePanel = function(parentCategory)
     local listBaseY = controlY - 36
 
     PopulateRotationDropdown = function()
+        -- Phase A: build cache eagerly (runs on OnShow / after ignore changes)
+        wipe(rotSpellCache)
+        local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
+        if ok and type(rotSpells) == "table" then
+            for _, sid in ipairs(rotSpells) do
+                if IsPlayerSpell(sid) then
+                    local si = C_Spell.GetSpellInfo(sid)
+                    if si then
+                        rotSpellCache[#rotSpellCache + 1] = {
+                            sid     = sid,
+                            name    = si.name,
+                            iconID  = si.iconID,
+                            ignored = db.ignoredSpells[sid],
+                        }
+                    end
+                end
+            end
+        end
+
+        -- Phase B: register cheap dropdown callback that reads from cache
         UIDropDownMenu_Initialize(ignoreDD, function(self, level)
-            local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
-            if not ok or type(rotSpells) ~= "table" or #rotSpells == 0 then
+            if #rotSpellCache == 0 then
                 local info    = UIDropDownMenu_CreateInfo()
                 info.text     = "|cff888888No rotation spells available|r"
                 info.disabled = true
                 UIDropDownMenu_AddButton(info, level)
                 return
             end
-            for _, sid in ipairs(rotSpells) do
-                if IsPlayerSpell(sid) then  -- skip talents/abilities the player hasn't learned
-                    local si = C_Spell.GetSpellInfo(sid)
-                    if si then
-                        local ignored     = db.ignoredSpells[sid]
-                        local info        = UIDropDownMenu_CreateInfo()
-                        info.text         = (ignored and "|cff888888" or "")
-                                            .. si.name
-                                            .. "  |cff666666[" .. sid .. "]|r"
-                                            .. (ignored and " (hidden)|r" or "")
-                        info.icon         = si.iconID
-                        info.disabled     = ignored
-                        local capturedSid  = sid
-                        local capturedName = si.name
-                        if not ignored then
-                            info.func = function()
-                                selectedIgnoreSpellID = capturedSid
-                                UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
-                            end
-                        end
-                        UIDropDownMenu_AddButton(info, level)
+            for _, entry in ipairs(rotSpellCache) do
+                local info    = UIDropDownMenu_CreateInfo()
+                info.text     = (entry.ignored and "|cff888888" or "")
+                                .. entry.name
+                                .. "  |cff666666[" .. entry.sid .. "]|r"
+                                .. (entry.ignored and " (hidden)|r" or "")
+                info.icon     = entry.iconID
+                info.disabled = entry.ignored
+                if not entry.ignored then
+                    local capturedSid  = entry.sid
+                    local capturedName = entry.name
+                    info.func = function()
+                        selectedIgnoreSpellID = capturedSid
+                        UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
                     end
                 end
+                UIDropDownMenu_AddButton(info, level)
             end
         end)
     end
