@@ -8,7 +8,7 @@
 ## X-GitHub: https://github.com/mauro-pinheiro/HekiLight
 ## SavedVariables: HekiLightDB
 ## SavedVariablesPerCharacter: HekiLightDBChar
-## X-Curse-Project-ID:
+## X-Curse-Project-ID: 1482868
 ## X-Wago-ID:
 
 HekiLight.lua
