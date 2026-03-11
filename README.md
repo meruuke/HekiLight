@@ -13,7 +13,7 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 - 🚫 Secondary slots automatically hide spells that are on cooldown — tracked per-cast, so pre-pull cooldowns are respected too
 - 🙈 **Ignore list** — hide specific spells from the secondary list via the dedicated **Ignored Spells** settings sub-panel or `/hkl ignore` (only spells you have actually learned appear in the dropdown)
 - ⌨️ Displays the keybind for the primary spell (like Hekili did)
-- ⏱️ Cooldown spiral overlay on the primary icon
+- ⏱️ Cooldown spiral overlay on the primary icon — toggleable via Settings or `/hkl`
 - 🔴 Pulsing out-of-range tint when the suggested spell can't reach your target
 - ✨ Proc-glow border pulse (gold) when the suggested spell has an active proc
 - 📐 Movable and scalable — drag to reposition when unlocked

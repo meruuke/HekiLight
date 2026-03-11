@@ -364,8 +364,9 @@ local function BuildSettingsPanel()
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
     subtitle:SetText("Rotation assistant icon overlay  |cff666666v" .. version .. "|r")
 
-    local checkboxRefs = {}
-    local sliderRefs   = {}
+    local checkboxRefs  = {}
+    local sliderRefs    = {}
+    local panelUpdating = false
 
     -- Two-column layout: left = Appearance/Display/Minimap, right = Hide conditions
     local cols = {
@@ -418,7 +419,7 @@ local function BuildSettingsPanel()
         slider:SetObeyStepOnDrag(true)
         slider:SetValue(getValue())
         slider:SetScript("OnValueChanged", function(self, val)
-            setValue(val)
+            if not panelUpdating then setValue(val) end
             labelStr:SetText(label .. ": " .. val)
         end)
 
@@ -522,10 +523,13 @@ local function BuildSettingsPanel()
     -- Refresh all controls when the panel opens
     panel:SetScript("OnShow", function()
         for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
+        panelUpdating = true
         for _, ref in ipairs(sliderRefs) do
-            ref.slider:SetValue(ref.getValue())
-            ref.labelStr:SetText(ref.label .. ": " .. ref.getValue())
+            local v = ref.getValue()
+            ref.slider:SetValue(v)
+            ref.labelStr:SetText(ref.label .. ": " .. v)
         end
+        panelUpdating = false
     end)
 
     settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "HekiLight")
@@ -599,7 +603,7 @@ BuildIgnorePanel = function(parentCategory)
     PopulateRotationDropdown = function()
         UIDropDownMenu_Initialize(ignoreDD, function(self, level)
             local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
-            if not ok or not rotSpells or #rotSpells == 0 then
+            if not ok or type(rotSpells) ~= "table" or #rotSpells == 0 then
                 local info    = UIDropDownMenu_CreateInfo()
                 info.text     = "|cff888888No rotation spells available|r"
                 info.disabled = true
@@ -1116,7 +1120,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
         StopPollLoop()
-        display:Hide()
+        Refresh()
         Log("Left combat")
 
     elseif event == "CINEMATIC_START" or event == "PLAY_MOVIE" then
@@ -1297,6 +1301,7 @@ SlashCmdList["HEKILIGHT"] = function(msg)
 
     elseif msg == "range on" then
         db.showOutOfRange = true
+        Refresh()
         print("|cff88ccffHekiLight:|r Out-of-range tint enabled.")
 
     elseif msg == "range off" then

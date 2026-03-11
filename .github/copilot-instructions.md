@@ -13,7 +13,7 @@ Everything lives in `HekiLight.lua`. The file is structured in clearly labelled 
 ### Startup flow
 
 ```
-ADDON_LOADED → InitDB() → BuildUI() → BuildMinimapButton() → BuildSettingsPanel() → BuildIgnorePanel()
+ADDON_LOADED → InitDB() → BuildSlots() → BuildMinimapButton() → BuildSettingsPanel() → BuildIgnorePanel()
 PLAYER_ENTERING_WORLD → RebuildSlotBindings() → Refresh()
 ```
 
