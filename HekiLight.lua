@@ -56,9 +56,9 @@ local inCinematic = false  -- true while a cut-scene or pre-rendered movie is pl
 local elapsed     = 0
 -- Spells with a real cooldown (base CD > 1.5 s) that the player has cast.
 -- Used to grey secondary icons while the spell is on its real CD.
--- Populated by UNIT_SPELLCAST_SUCCEEDED; entries cleared by IsSpellOnCooldown
--- once IsSpellAvailable returns true (the secret-number pcall trick ensures
--- this only happens when the spell is truly off cooldown, not just off GCD).
+-- Populated by UNIT_SPELLCAST_SUCCEEDED; entries cleared lazily by IsSpellOnCooldown
+-- (once IsSpellAvailable returns true) and wholesale on PLAYER_REGEN_ENABLED so that
+-- spells removed from the rotation queue mid-combat don't accumulate indefinitely.
 local recentlyCastSpells = {}
 local rangeTicker   -- C_Timer ticker for range overlay pulse animation
 local glowTicker    -- C_Timer ticker for proc-glow border pulse animation
@@ -759,7 +759,7 @@ local function IsSpellAvailable(spellID)
 end
 
 -- Returns true when spellID has been cast and is still on its real cooldown.
--- Only spells with GetSpellBaseCooldown > 1500 ms are ever tracked (filters
+-- Only spells with GetSpellBaseCooldown > 1.5 s are ever tracked (filters
 -- out GCD-only spells). IsSpellAvailable uses the secret-number pcall trick —
 -- it returns true only when duration is plain 0, which means truly off CD
 -- (not just off GCD), so no grace period is needed.
@@ -1172,6 +1172,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
         StopPollLoop()
+        wipe(recentlyCastSpells)  -- prevent indefinite accumulation for spells removed mid-combat
         Refresh()
         Log("Left combat")
 
@@ -1196,7 +1197,8 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
 
     elseif event == "ACTIONBAR_UPDATE_STATE" then
         -- State changes (button highlights) don't affect slot assignments; just re-render.
-        Refresh()
+        -- Skip during combat — the poll loop at db.pollRate already handles this.
+        if not inCombat then Refresh() end
 
     elseif event == "ACTIONBAR_SLOT_CHANGED" or
            event == "UPDATE_BINDINGS" then
@@ -1222,10 +1224,10 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         -- arg1 = unit, arg2 = castGUID, arg3 = spellID
         -- Track spells with a real cooldown (base CD > 1.5 s) so secondary
         -- icons can be greyed while they are on cooldown.
-        -- GetSpellBaseCooldown returns base CD in ms as a plain Lua number.
+        -- GetSpellBaseCooldown returns base CD in seconds in retail 12.0+.
         if arg1 == "player" and arg3 then
-            local baseCDms = GetSpellBaseCooldown(arg3) or 0
-            if baseCDms > 1500 then
+            local baseCDsec = GetSpellBaseCooldown(arg3) or 0
+            if baseCDsec > 1.5 then
                 recentlyCastSpells[arg3] = true
             end
         end
@@ -1361,7 +1363,9 @@ SlashCmdList["HEKILIGHT"] = function(msg)
 
     elseif msg == "keybind off" then
         db.showKeybind = false
-        if slots[1] and slots[1].keybindText then slots[1].keybindText:Hide() end
+        for i = 1, #slots do
+            if slots[i] and slots[i].keybindText then slots[i].keybindText:Hide() end
+        end
         print("|cff88ccffHekiLight:|r Keybind text disabled.")
 
     elseif msg == "range on" then
@@ -1371,7 +1375,9 @@ SlashCmdList["HEKILIGHT"] = function(msg)
 
     elseif msg == "range off" then
         db.showOutOfRange = false
-        if slots[1] and slots[1].rangeOverlay then slots[1].rangeOverlay:Hide() end
+        for i = 1, #slots do
+            if slots[i] and slots[i].rangeOverlay then slots[i].rangeOverlay:Hide() end
+        end
         print("|cff88ccffHekiLight:|r Out-of-range tint disabled.")
 
     elseif msg == "procglow on" then
