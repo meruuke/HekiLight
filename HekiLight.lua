@@ -40,7 +40,7 @@ local DEFAULTS = {
     hideWhenCinematic = true,
     hideWhenMounted   = false,
     hideWhenResting   = false,
-    hideWhenVehicle   = false,
+    hideWhenVehicle   = true,
     hideWhenNoTarget  = false,
     -- Show conditions (positive logic — show when any of these are true)
     showWhenInCombat          = true,
@@ -429,7 +429,7 @@ local function BuildSettingsPanel()
     -- Two-column layout: left = Appearance/Display/Minimap, right = Hide conditions
     local cols = {
         left  = { x = 16,  y = -70 },
-        right = { x = 310, y = -70 },
+        right = { x = 320, y = -70 },
     }
 
     local function AddCheckbox(label, tip, getValue, setValue, colName)
@@ -463,7 +463,7 @@ local function BuildSettingsPanel()
         labelStr:SetText(label .. ": " .. getValue())
 
         local slider = CreateFrame("Slider", nil, panel, "BackdropTemplate")
-        slider:SetPoint("TOPLEFT", col.x + 4, col.y - 18)
+        slider:SetPoint("TOPLEFT", col.x + 4, col.y - 20)
         slider:SetSize(240, 17)
         slider:SetOrientation("HORIZONTAL")
         slider:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
@@ -501,9 +501,9 @@ local function BuildSettingsPanel()
 
     local function SectionHeader(text, colName)
         local col = cols[colName or "left"]
-        local s = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        local s = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
         s:SetPoint("TOPLEFT", col.x, col.y)
-        s:SetText(text)
+        s:SetText("|cffffcc00" .. text .. "|r")
         col.y = col.y - 22
     end
 
@@ -807,7 +807,7 @@ BuildIgnorePanel = function(parentCategory)
                 dbChar.ignoredSpells[capturedSid] = nil
                 RefreshIgnoreList()
             end)
-            row:SetPoint("TOPLEFT", 16, listBaseY - (rowIdx - 1) * 26)
+            row:SetPoint("TOPLEFT", 16, listBaseY - (rowIdx - 1) * 30)
             row:Show()
         end
 
@@ -1113,7 +1113,8 @@ local function ShouldShow()
     if db.hideWhenResting and IsResting() then
         return false, "resting"
     end
-    if db.hideWhenVehicle and UnitInVehicle("player") then
+    if db.hideWhenVehicle and (UnitInVehicle("player") or UnitHasVehicleUI("player")
+            or HasVehicleActionBar() or HasOverrideActionBar()) then
         return false, "vehicle"
     end
     if db.hideWhenNoTarget and not UnitExists("target") then
@@ -1275,6 +1276,8 @@ events:RegisterEvent("UPDATE_BINDINGS")
 events:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 events:RegisterEvent("ACTIONBAR_UPDATE_STATE")  -- fires when Rotation Assistant changes highlight
 events:RegisterEvent("UNIT_FLAGS")              -- catches death / vehicle state changes
+events:RegisterEvent("UNIT_ENTERED_VEHICLE")    -- immediate hide on vehicle entry
+events:RegisterEvent("UNIT_EXITED_VEHICLE")     -- immediate refresh on vehicle exit
 events:RegisterEvent("UNIT_HEALTH")             -- instant hide on death (no poll lag)
 events:RegisterEvent("CINEMATIC_START")         -- in-engine cut-scene begins
 events:RegisterEvent("CINEMATIC_STOP")          -- in-engine cut-scene ends
@@ -1344,6 +1347,18 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     elseif event == "UNIT_FLAGS" or event == "UNIT_HEALTH" then
         -- Only care about the player unit; re-run Refresh so ShouldShow() acts immediately
         if arg1 == "player" then Refresh() end
+
+    elseif event == "UNIT_ENTERED_VEHICLE" then
+        if arg1 == "player" then
+            display:Hide()
+            Log("Vehicle entered — display hidden")
+        end
+
+    elseif event == "UNIT_EXITED_VEHICLE" then
+        if arg1 == "player" then
+            Refresh()
+            Log("Vehicle exited — refreshed")
+        end
 
     elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" or
            event == "PLAYER_TARGET_CHANGED"        or
