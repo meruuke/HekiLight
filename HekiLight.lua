@@ -289,9 +289,10 @@ local settingsCategory
 
 local function UpdateMinimapPos()
     local angle = math.rad(db.minimapAngle or 225)
+    local r = (Minimap:GetWidth() / 2) + 5  -- dynamic: sits 5px outside the minimap edge
     minimapBtn:SetPoint("CENTER", Minimap, "CENTER",
-        80 * math.cos(angle),
-        80 * math.sin(angle))
+        r * math.cos(angle),
+        r * math.sin(angle))
 end
 
 local function BuildMinimapButton()
@@ -300,20 +301,23 @@ local function BuildMinimapButton()
     minimapBtn:SetFrameStrata("MEDIUM")
     minimapBtn:SetFrameLevel(8)
 
+    -- Background disc — same texture/size as LibDBIcon (24 px circular disc)
     local bg = minimapBtn:CreateTexture(nil, "BACKGROUND")
-    bg:SetSize(32, 32)
+    bg:SetSize(24, 24)
     bg:SetPoint("CENTER")
-    bg:SetTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Background")
+    bg:SetTexture(136467)  -- Interface\Minimap\UI-Minimap-Background
 
     local icon = minimapBtn:CreateTexture(nil, "ARTWORK")
     icon:SetSize(18, 18)
     icon:SetPoint("CENTER")
     icon:SetTexture("Interface\\Icons\\ability_whirlwind")
+    icon:SetTexCoord(0.05, 0.95, 0.05, 0.95)  -- 5% crop on each side (LibDBIcon standard)
 
+    -- Overlay ring anchored at TOPLEFT — the circular ring masks the icon's square corners
     local border = minimapBtn:CreateTexture(nil, "OVERLAY")
-    border:SetSize(54, 54)
-    border:SetPoint("CENTER")
-    border:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    border:SetSize(50, 50)
+    border:SetPoint("TOPLEFT", minimapBtn, "TOPLEFT")
+    border:SetTexture(136430)  -- Interface\Minimap\MiniMap-TrackingBorder
 
     local hl = minimapBtn:CreateTexture(nil, "HIGHLIGHT")
     hl:SetSize(32, 32)
@@ -327,7 +331,7 @@ local function BuildMinimapButton()
         self:SetScript("OnUpdate", function()
             local mx, my = Minimap:GetCenter()
             local px, py = GetCursorPosition()
-            local s = UIParent:GetEffectiveScale()
+            local s = Minimap:GetEffectiveScale()  -- must match Minimap scale, not UIParent
             db.minimapAngle = math.deg(math.atan2((py / s) - my, (px / s) - mx))
             UpdateMinimapPos()
         end)
@@ -405,7 +409,8 @@ local function BuildSettingsPanel()
     end
 
     -- Custom slider: no global-name dependency (OptionsSliderTemplate is deprecated in 10.x+)
-    local function AddSlider(label, min, max, step, getValue, setValue, colName)
+    -- tip (optional): hover tooltip text shown on the slider label and track
+    local function AddSlider(label, min, max, step, getValue, setValue, colName, tip)
         local col = cols[colName or "left"]
 
         local labelStr = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -431,6 +436,17 @@ local function BuildSettingsPanel()
             if not panelUpdating then setValue(val) end
             labelStr:SetText(label .. ": " .. val)
         end)
+        if tip then
+            local showTip = function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine(label)
+                GameTooltip:AddLine(tip, 1, 1, 1, true)
+                GameTooltip:Show()
+            end
+            local hideTip = function() GameTooltip:Hide() end
+            slider:SetScript("OnEnter", showTip)
+            slider:SetScript("OnLeave", hideTip)
+        end
 
         table.insert(sliderRefs, { slider = slider, labelStr = labelStr,
                                    label = label, step = step, getValue = getValue })
@@ -456,18 +472,25 @@ local function BuildSettingsPanel()
             display:EnableMouse(not v)
             print("|cff88ccffHekiLight:|r Position " .. (v and "locked." or "unlocked — drag to reposition."))
         end)
-    AddSlider("Scale", 0.2, 3.0, 0.1,
+    AddSlider("Overall Scale", 0.2, 3.0, 0.1,
         function() return db.scale end,
-        function(v) db.scale = v; display:SetScale(v) end)
+        function(v) db.scale = v; display:SetScale(v) end,
+        "left", "Scales the entire HekiLight overlay — icons, spacing, and keybind text. Use Icon Size for the raw pixel size of the icon texture.")
     AddSlider("Icon Size", 16, 256, 8,
         function() return db.iconSize end,
-        function(v) db.iconSize = v; ApplySlotLayout(); Refresh() end)
-    AddSlider("Suggestions", 1, 5, 1,
+        function(v) db.iconSize = v; ApplySlotLayout(); Refresh() end,
+        "left", "Sets the raw pixel size of the spell icon texture. Affects only the icon, not the spacing or keybind text.")
+    AddSlider("Spell Icon Slots", 1, 5, 1,
         function() return db.numSuggestions end,
-        function(v) db.numSuggestions = v; ApplySlotLayout(); Refresh() end)
+        function(v) db.numSuggestions = v; ApplySlotLayout(); Refresh() end,
+        "left", "Number of spell icons to display in the suggestion bar (1 = primary only, up to 5).")
     AddSlider("Icon Spacing", 0, 32, 2,
         function() return db.iconSpacing end,
         function(v) db.iconSpacing = v; ApplySlotLayout(); Refresh() end)
+    AddSlider("Refresh Rate (s)", 0.02, 0.5, 0.01,
+        function() return db.pollRate end,
+        function(v) db.pollRate = v end,
+        "left", "How often (in seconds) the suggestion bar refreshes. Lower = more responsive, higher = less CPU usage.")
 
     SectionHeader("Display Options")
     AddCheckbox("Show keybind text",
@@ -478,12 +501,12 @@ local function BuildSettingsPanel()
         "Pulse the icon red when the suggested spell cannot reach your target.",
         function() return db.showOutOfRange end,
         function(v) db.showOutOfRange = v; if not v and slots[1] and slots[1].rangeOverlay then slots[1].rangeOverlay:Hide() end end)
-    AddCheckbox("Proc glow border",
-        "Pulse the icon border gold when the suggested spell has an active proc glow.",
+    AddCheckbox("Spell Proc Glow",
+        "Pulse the icon border gold when the suggested spell has an active proc glow (triggered ability highlight).",
         function() return db.showProcGlow end,
         function(v) db.showProcGlow = v; if not v then StopGlowPulse() end end)
     AddCheckbox("Show cooldown spiral",
-        "Display a cooldown sweep on the icon. May cause UI taint — use with caution.",
+        "Display a cooldown sweep on the icon. May interfere with protected Blizzard UI elements and prevent ability usage. Enable only if you experience no issues.",
         function() return db.showCooldown end,
         function(v) db.showCooldown = v; if not v and slots[1] and slots[1].cooldownFrame then slots[1].cooldownFrame:Hide() end end)
     AddCheckbox("Play sounds",
@@ -539,6 +562,30 @@ local function BuildSettingsPanel()
 
     -- ── Footer ───────────────────────────────────────────────────────────────
     local footerY = math.min(cols.left.y, cols.right.y) - 16
+
+    local resetBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    resetBtn:SetSize(140, 22)
+    resetBtn:SetPoint("TOPLEFT", 16, footerY)
+    resetBtn:SetText("Reset to Defaults")
+    resetBtn:SetScript("OnClick", function()
+        wipe(db)
+        for k, v in pairs(DEFAULTS) do db[k] = v end
+        ApplyPosition()
+        display:SetScale(db.scale)
+        ApplySlotLayout()
+        Refresh()
+        for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
+        panelUpdating = true
+        for _, ref in ipairs(sliderRefs) do
+            local v = ref.getValue()
+            ref.slider:SetValue(v)
+            ref.labelStr:SetText(ref.label .. ": " .. v)
+        end
+        panelUpdating = false
+        print("|cff88ccffHekiLight:|r All settings reset to defaults.")
+    end)
+    footerY = footerY - 32
+
     local footerHint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     footerHint:SetPoint("TOPLEFT", 16, footerY)
     footerHint:SetText("/hkl for quick commands  ·  Drag the icon in-game to reposition  ·  /hkl lock to prevent accidental moves")
@@ -583,7 +630,7 @@ BuildIgnorePanel = function(parentCategory)
     desc:SetPoint("TOPLEFT", 16, -44)
     desc:SetWidth(590)
     desc:SetJustifyH("LEFT")
-    desc:SetText("Spells hidden from the secondary suggestion list. Use the dropdown to select a spell from your current rotation, then click Add.")
+    desc:SetText("Spells hidden from the secondary suggestion list. Use the dropdown to select a spell from your current rotation, then click Add.\n|cffaaaaaa Requires Rotation Assistant to be active — enter combat or enable it manually to populate the list.|r")
 
     -- y cursor: below the description block (~2 lines × 14 px + padding)
     local controlY = -80
