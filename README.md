@@ -4,11 +4,11 @@ A lightweight WoW addon (Midnight 12.0+) that reads Blizzard's built-in **Rotati
 
 ## Why?
 
-Hekili ended with the Midnight pre-patch because Blizzard removed the APIs needed for APL-based spell simulation. However, Blizzard's own SBA now handles rotation logic internally, and exposes just enough API for an addon to **read and re-display** that suggestion queue with a better UI.
+Hekili ended with the Midnight pre-patch because Blizzard removed the APIs needed for APL-based spell simulation. However, Blizzard's own Rotation Assistant now handles rotation logic internally, and exposes just enough API for an addon to **read and re-display** that suggestion queue with a better UI.
 
 ## Features
 
-- 🎯 Shows up to **N spell icons** from the SBA rotation queue (default: 3, configurable 1–5)
+- 🎯 Shows up to **N spell icons** from the Rotation Assistant queue (default: 3, configurable 1–5)
 - 🥇 First icon is always the **currently highlighted suggestion** (the spell to cast right now)
 - 🚫 Secondary slots automatically hide spells that are on cooldown — tracked per-cast, so pre-pull cooldowns are respected too
 - 🙈 **Ignore list** — hide specific spells from the secondary list via the dedicated **Ignored Spells** settings sub-panel or `/hkl ignore` (only spells you have actually learned appear in the dropdown)
@@ -32,7 +32,7 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 
 1. Copy the `HekiLight` folder to `World of Warcraft/_retail_/Interface/AddOns/`
 2. Enable the addon in the character select screen
-3. Enable Blizzard's rotation assistant in **Interface → Combat → Rotation Assistant**
+3. Enable **Rotation Assistant** in **Interface → Combat**
 
 ## Commands
 
@@ -59,7 +59,7 @@ Hekili ended with the Midnight pre-patch because Blizzard removed the APIs neede
 | `/hkl unignore <spellID>` | Restore a spell to the secondary list |
 | `/hkl ignorelist` | List all currently ignored spells |
 | `/hkl debug` | Toggle verbose debug output |
-| `/hkl status` | Print SBA state and active suppression reason |
+| `/hkl status` | Print Rotation Assistant state and active suppression reason |
 
 ## Key APIs Used
 
@@ -68,8 +68,8 @@ These are official Blizzard APIs introduced in Midnight 12.0:
 ```lua
 C_AssistedCombat.GetNextCastSpell(false)         -- primary spell suggestion (highlighted)
 C_AssistedCombat.GetRotationSpells()             -- full rotation spell queue
-C_ActionBar.HasAssistedCombatActionButtons()     -- is Rotation Assistant active?
-C_ActionBar.FindAssistedCombatActionButtons()    -- action slot IDs the Rotation Assistant is using
+C_ActionBar.HasAssistedCombatActionButtons()     -- Rotation Assistant button active?
+C_ActionBar.FindAssistedCombatActionButtons()    -- Rotation Assistant slot IDs
 C_ActionBar.IsAssistedCombatAction(slotID)       -- verify a slot belongs to the Rotation Assistant
 C_ActionBar.FindSpellActionButtons(spellID)      -- real bar slots for a spell
 C_ActionBar.IsActionInRange(slotID)              -- range check

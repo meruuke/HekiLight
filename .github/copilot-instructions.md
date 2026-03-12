@@ -2,7 +2,7 @@
 
 ## What this addon does
 
-HekiLight is a single-file World of Warcraft addon (Lua + TOC) for **Midnight 12.0+** (`## Interface: 120001`). It reads Blizzard's built-in **Single-Button Rotation Assistant (SBA)** and re-displays the suggested spell as a movable, skinnable icon overlay — similar to how Hekili used to work.
+HekiLight is a single-file World of Warcraft addon (Lua + TOC) for **Midnight 12.0+** (`## Interface: 120001`). It reads Blizzard's built-in **Rotation Assistant** and re-displays the suggested spell as a movable, skinnable icon overlay — similar to how Hekili used to work.
 
 There is no build system, no package manager, no test suite, and no linter. "Running" the addon means loading it inside WoW.
 
@@ -19,20 +19,20 @@ PLAYER_ENTERING_WORLD → RebuildSlotBindings() → Refresh()
 
 ### Core loop
 
-The addon uses an **OnUpdate polling loop** rather than a purely event-driven approach, because the SBA suggestion can change every frame during combat:
+The addon uses an **OnUpdate polling loop** rather than a purely event-driven approach, because the Rotation Assistant suggestion can change every frame during combat:
 
 - `StartPollLoop()` — sets `OnUpdate` on the `display` frame; fires `Refresh()` every `db.pollRate` seconds (default 0.05 s).
-- `StopPollLoop()` — clears the script; called on combat-end and when SBA is inactive.
+- `StopPollLoop()` — clears the script; called on combat-end and when Rotation Assistant is inactive.
 - `Refresh()` — the central render function: queries the current suggestion, updates the icon texture, keybind text, range overlay, cooldown, and proc-glow, then calls `ShouldShow()` to decide whether to actually show the frame.
 
 ### Suggestion detection (two-layer)
 
 `GetActiveSuggestion()` returns `spellID, realSlotID`:
 
-1. **Primary**: `C_AssistedCombat.GetNextCastSpell(false)` — direct engine call; works regardless of whether the SBA floating button is on a bar.
-2. **Fallback**: derive spellID via `GetActionInfo` on the SBA slot found through `C_ActionBar.FindAssistedCombatActionButtons()` / `IsAssistedCombatAction()`.
+1. **Primary**: `C_AssistedCombat.GetNextCastSpell(false)` — direct engine call; works regardless of whether the Rotation Assistant button is on a bar.
+2. **Fallback**: derive spellID via `GetActionInfo` on the Rotation Assistant slot found through `C_ActionBar.FindAssistedCombatActionButtons()` / `IsAssistedCombatAction()`.
 
-`realSlotID` is a **non-SBA** action bar slot for the same spell — needed for `IsActionInRange` and keybind lookup, since SBA slots are taint-protected.
+`realSlotID` is a **regular** action bar slot for the same spell — needed for `IsActionInRange` and keybind lookup, since Rotation Assistant slots are taint-protected.
 
 ### Visibility logic (`ShouldShow`)
 
@@ -52,7 +52,7 @@ All runtime settings are read/written through `db.*`.
 - **All state is module-level locals** — no OOP, no namespaces, no global table beyond `HekiLightDB`.
 - **Wrap taint-sensitive calls in `pcall()`** — APIs that touch the action bar (cooldown reads, `GetActionInfo`) can taint Blizzard protected frames and must be guarded.
 - **`display` frame drives everything** — the root `BackdropTemplate` frame hosts all child widgets (icon, cooldown, range overlay, keybind label). Its `OnUpdate` script is the poll loop.
-- **Keybind lookup path**: `spellID → FindSpellActionButtons() → filter out SBA slots → SLOT_BINDINGS[slot] → GetBindingKey() → FormatKey()`
+- **Keybind lookup path**: `spellID → FindSpellActionButtons() → filter out Rotation Assistant slots → SLOT_BINDINGS[slot] → GetBindingKey() → FormatKey()`
 - **Slash command pattern**: simple `if/elseif` chains on `strtrim(msg:lower())`. Bulk hide/show toggles are data-driven via `ALWAYS_HIDE_FLAGS` and `SHOW_FLAGS` tables.
 - **Settings panels**: two canvas layout categories registered via `Settings.RegisterCanvasLayoutCategory` / `Settings.RegisterCanvasLayoutSubcategory` (10.x+ API).
   - `BuildSettingsPanel()` — main "HekiLight" category; two-column layout (Appearance / Display / Minimap / Hide-Show). Panel height set once from column extent. Registers `settingsCategory` then calls `BuildIgnorePanel(settingsCategory)`.
@@ -64,9 +64,9 @@ All runtime settings are read/written through `db.*`.
 
 ```lua
 C_AssistedCombat.GetNextCastSpell(false)          -- primary spell suggestion
-C_ActionBar.HasAssistedCombatActionButtons()       -- SBA active?
-C_ActionBar.FindAssistedCombatActionButtons()      -- SBA slot IDs
-C_ActionBar.IsAssistedCombatAction(slotID)         -- slot is SBA slot?
+C_ActionBar.HasAssistedCombatActionButtons()       -- Rotation Assistant button active?
+C_ActionBar.FindAssistedCombatActionButtons()      -- Rotation Assistant slot IDs
+C_ActionBar.IsAssistedCombatAction(slotID)         -- slot is a Rotation Assistant slot?
 C_ActionBar.FindSpellActionButtons(spellID)        -- real bar slots for spell
 C_ActionBar.IsActionInRange(slotID)                -- range check
 C_Spell.GetSpellInfo(spellID)                      -- icon ID, spell name

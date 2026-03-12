@@ -1,5 +1,5 @@
 -- HekiLight
--- Wraps Blizzard's Single-Button Rotation Assistant (SBA) and displays its
+-- Wraps Blizzard's Rotation Assistant and displays its
 -- current suggestion as a movable, skinnable icon overlay.
 --
 -- Key APIs used (Midnight 12.0+):
@@ -28,7 +28,7 @@ local DEFAULTS = {
     scale          = 1.0,
     locked         = false,
     showKeybind    = true,
-    showCooldown   = false,   -- SBA cooldown data is taint-protected; enable at your own risk
+    showCooldown   = false,   -- Rotation Assistant cooldown data is taint-protected; enable at your own risk
     showOutOfRange = true,
     showProcGlow   = true,    -- pulse border gold when the suggested spell has an active proc glow
     pollRate       = 0.05,   -- how often (seconds) to refresh while in combat
@@ -38,6 +38,10 @@ local DEFAULTS = {
     -- Hard stops (always hide regardless of combat state)
     hideWhenDead      = true,
     hideWhenCinematic = true,
+    hideWhenMounted   = false,
+    hideWhenResting   = false,
+    hideWhenVehicle   = false,
+    hideWhenNoTarget  = false,
     -- Show conditions (positive logic — show when any of these are true)
     showWhenInCombat          = true,
     showWhenAttackableTarget  = true,
@@ -149,7 +153,7 @@ end
 --- Return a short keybind string for a spell, by finding the spell's real
 --- action bar slot(s) and looking up the binding. Since we now always have
 --- the spellID from GetActiveSuggestion(), we no longer need to extract it
---- from the SBA slot first, and the texture-fallback scan is gone.
+--- from the Rotation Assistant slot first, and the texture-fallback scan is gone.
 local function GetSpellKeybind(spellID)
     local actionSlots = C_ActionBar.FindSpellActionButtons(spellID)
     if actionSlots then
@@ -168,6 +172,8 @@ local function GetSpellKeybind(spellID)
 end
 
 -- ── UI Construction ───────────────────────────────────────────────────────────
+
+local Refresh  -- forward declaration; defined later after ShouldShow
 
 -- Resize the container and reposition every slot sub-frame.
 -- Call whenever iconSize, iconSpacing, or numSuggestions changes.
@@ -504,6 +510,22 @@ local function BuildSettingsPanel()
         "Hide the icon during cut-scenes and pre-rendered movies.",
         function() return db.hideWhenCinematic ~= false end,
         function(v) db.hideWhenCinematic = v; Refresh() end, "right")
+    AddCheckbox("Player is mounted",
+        "Hide the icon while you are mounted.",
+        function() return db.hideWhenMounted ~= false end,
+        function(v) db.hideWhenMounted = v; Refresh() end, "right")
+    AddCheckbox("Player is resting",
+        "Hide the icon while in a resting area (inn or city).",
+        function() return db.hideWhenResting ~= false end,
+        function(v) db.hideWhenResting = v; Refresh() end, "right")
+    AddCheckbox("Player is in a vehicle",
+        "Hide the icon while controlling a vehicle.",
+        function() return db.hideWhenVehicle ~= false end,
+        function(v) db.hideWhenVehicle = v; Refresh() end, "right")
+    AddCheckbox("No target selected",
+        "Hide the icon when you have no target.",
+        function() return db.hideWhenNoTarget ~= false end,
+        function(v) db.hideWhenNoTarget = v; Refresh() end, "right")
 
     SectionHeader("Show Icon When...", "right")
     AddCheckbox("Player is in combat",
@@ -757,19 +779,19 @@ local function IsAssistActive()
 end
 
 -- Returns the suggested spellID from the rotation engine, plus the first
--- real (non-SBA) action bar slot that contains it for range/keybind checks.
+-- regular action bar slot that contains it for range/keybind checks.
 --
 -- Detection order:
 --   1. C_AssistedCombat.GetNextCastSpell(false) — direct engine query; works
---      with either SBA button or Action Bar Highlight (or both).
---   2. Fallback: derive spellID from the SBA slot via GetActionInfo.
+--      with either Rotation Assistant button or Assisted Highlight (or both).
+--   2. Fallback: derive spellID from the Rotation Assistant slot via GetActionInfo.
 --      Keeps the old behaviour for any edge case where GetNextCastSpell is nil.
 local function GetActiveSuggestion()
     local spellID
 
     -- Primary path: ask the rotation engine directly (Midnight 12.0+).
     -- checkForVisibleButton=false means "give me the suggestion even if the
-    -- SBA floating button is hidden / not on the bar."
+    -- Rotation Assistant button is hidden / not on the bar."
     if C_AssistedCombat.GetNextCastSpell then
         local ok
         ok, spellID = pcall(C_AssistedCombat.GetNextCastSpell, false)
@@ -777,9 +799,9 @@ local function GetActiveSuggestion()
         Log("GetNextCastSpell →", tostring(spellID))
     end
 
-    -- Fallback: SBA slot → GetActionInfo → spellID (old path; safety net).
+    -- Fallback: Rotation Assistant slot → GetActionInfo → spellID (old path; safety net).
     if not spellID then
-        -- Find the SBA slot the old way.
+        -- Find the Rotation Assistant slot the old way.
         local sbaSlot
         if C_ActionBar.HasAssistedCombatActionButtons() then
             local sbaSlots = C_ActionBar.FindAssistedCombatActionButtons()
@@ -800,7 +822,7 @@ local function GetActiveSuggestion()
                 return (t == "spell") and id or nil
             end)
             if not ok then spellID = nil end
-            Log("Fallback SBA slot", tostring(sbaSlot), "→ spellID", tostring(spellID))
+            Log("Fallback Rotation Assistant slot", tostring(sbaSlot), "→ spellID", tostring(spellID))
         end
     end
 
@@ -809,7 +831,7 @@ local function GetActiveSuggestion()
         return nil, nil
     end
 
-    -- Find a real (non-SBA) action bar slot for this spell so we can do
+    -- Find a regular action bar slot for this spell so we can do
     -- range checks and keybind lookups against the player's actual bars.
     local realSlotID
     local actionSlots = C_ActionBar.FindSpellActionButtons(spellID)
@@ -825,7 +847,7 @@ local function GetActiveSuggestion()
     return spellID, realSlotID
 end
 
--- Returns the first real (non-SBA) action bar slot for a spellID.
+-- Returns the first regular action bar slot for a spellID.
 -- Used for range checks and keybind lookups on secondary rotation spells.
 local function GetRealSlot(spellID)
     local slotList = C_ActionBar.FindSpellActionButtons(spellID)
@@ -840,7 +862,7 @@ local function GetRealSlot(spellID)
 end
 
 -- Returns up to n { spellID, realSlotID } entries representing the current
--- rotation queue.  Slot 1 is always the active SBA suggestion (GetNextCastSpell).
+-- rotation queue.  Slot 1 is always the active Rotation Assistant suggestion (GetNextCastSpell).
 -- Slots 2..n come from C_AssistedCombat.GetRotationSpells() (Midnight 12.0+).
 --
 -- Two-pass fill: pass 1 adds spells with no real cooldown (duration ≤1.5s),
@@ -944,6 +966,18 @@ local function ShouldShow()
     if db.hideWhenCinematic and inCinematic then
         return false, "cinematic"
     end
+    if db.hideWhenMounted and IsMounted() then
+        return false, "mounted"
+    end
+    if db.hideWhenResting and IsResting() then
+        return false, "resting"
+    end
+    if db.hideWhenVehicle and UnitInVehicle("player") then
+        return false, "vehicle"
+    end
+    if db.hideWhenNoTarget and not UnitExists("target") then
+        return false, "no target"
+    end
 
     -- Positive show conditions — show if any enabled condition is met.
     if db.showWhenInCombat and inCombat then
@@ -956,8 +990,18 @@ local function ShouldShow()
     return false, "no show condition met"
 end
 
-local function Refresh()
+Refresh = function()
     if #slots == 0 then return end  -- BuildSlots not yet called
+
+    -- Check suppression first, before any API work.
+    local showOk, reason = ShouldShow()
+    if not showOk then
+        currentSuggestionID = nil
+        StopGlowPulse()
+        display:Hide()
+        Log("display suppressed — reason:", reason)
+        return
+    end
 
     local queue   = GetSuggestionQueue(db.numSuggestions)
     local primary = queue[1]
@@ -976,16 +1020,6 @@ local function Refresh()
         currentSuggestionID = nil
         StopGlowPulse()
         display:Hide()
-        return
-    end
-
-    -- Check suppression before doing any rendering work
-    local showOk, reason = ShouldShow()
-    if not showOk then
-        currentSuggestionID = nil
-        StopGlowPulse()
-        display:Hide()
-        Log("display suppressed — reason:", reason)
         return
     end
 
@@ -1064,7 +1098,7 @@ end
 
 -- ── Combat Polling ────────────────────────────────────────────────────────────
 -- OnUpdate fires at the configured poll rate and calls Refresh() to track
--- the SBA suggestion. Only runs when SBA is active AND the player is in combat.
+-- the Rotation Assistant suggestion. Only runs when Rotation Assistant is active AND the player is in combat.
 local function OnUpdate(_, dt)
     elapsed = elapsed + dt
     if elapsed >= db.pollRate then
@@ -1073,9 +1107,9 @@ local function OnUpdate(_, dt)
     end
 end
 
--- Start the poll loop only when SBA is actually configured and we're in combat.
+-- Start the poll loop only when Rotation Assistant is actually configured and we're in combat.
 -- Called from combat-start and from action bar change events so the loop can
--- activate mid-combat if the player adds the SBA button during a fight.
+-- activate mid-combat if the player adds the Rotation Assistant button during a fight.
 local function StartPollLoop()
     elapsed = db.pollRate  -- fire on the very next frame
     display:SetScript("OnUpdate", OnUpdate)
@@ -1098,7 +1132,7 @@ events:RegisterEvent("PLAYER_REGEN_DISABLED")   -- combat start
 events:RegisterEvent("PLAYER_REGEN_ENABLED")    -- combat end
 events:RegisterEvent("UPDATE_BINDINGS")
 events:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
-events:RegisterEvent("ACTIONBAR_UPDATE_STATE")  -- fires when SBA changes highlight
+events:RegisterEvent("ACTIONBAR_UPDATE_STATE")  -- fires when Rotation Assistant changes highlight
 events:RegisterEvent("UNIT_FLAGS")              -- catches death / vehicle state changes
 events:RegisterEvent("UNIT_HEALTH")             -- instant hide on death (no poll lag)
 events:RegisterEvent("CINEMATIC_START")         -- in-engine cut-scene begins
@@ -1107,6 +1141,7 @@ events:RegisterEvent("PLAY_MOVIE")              -- pre-rendered movie begins
 events:RegisterEvent("STOP_MOVIE")              -- pre-rendered movie ends
 events:RegisterEvent("PLAYER_MOUNT_DISPLAY_CHANGED")  -- mount / dismount
 events:RegisterEvent("PLAYER_TARGET_CHANGED")         -- target swapped or cleared
+events:RegisterEvent("ZONE_CHANGED_NEW_AREA")         -- entering/leaving resting areas (city/inn)
 events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")  -- proc glow appears
 events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")  -- proc glow fades
 events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")             -- track real-CD casts for grey filter
@@ -1129,7 +1164,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
 
     elseif event == "PLAYER_REGEN_DISABLED" then
         inCombat = true
-        -- Poll only when rotation assistance is active (SBA button or Highlight).
+        -- Poll only when rotation assistance is active (Rotation Assistant button or Assisted Highlight).
         -- ACTIONBAR_SLOT_CHANGED will start the loop if the feature is enabled mid-combat.
         if IsAssistActive() then StartPollLoop() end
         Log("Entered combat")
@@ -1155,7 +1190,8 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         if arg1 == "player" then Refresh() end
 
     elseif event == "PLAYER_MOUNT_DISPLAY_CHANGED" or
-           event == "PLAYER_TARGET_CHANGED" then
+           event == "PLAYER_TARGET_CHANGED"        or
+           event == "ZONE_CHANGED_NEW_AREA" then
         Refresh()
 
     elseif event == "ACTIONBAR_UPDATE_STATE" then
@@ -1202,6 +1238,10 @@ end)
 local ALWAYS_HIDE_FLAGS = {
     dead      = { key = "hideWhenDead",      label = "Always hide when dead" },
     cinematic = { key = "hideWhenCinematic", label = "Always hide during cinematic" },
+    mounted   = { key = "hideWhenMounted",   label = "Always hide when mounted" },
+    resting   = { key = "hideWhenResting",   label = "Always hide when resting" },
+    vehicle   = { key = "hideWhenVehicle",   label = "Always hide when in a vehicle" },
+    notarget  = { key = "hideWhenNoTarget",  label = "Always hide when no target" },
 }
 local SHOW_FLAGS = {
     combat = { key = "showWhenInCombat",         label = "Show when in combat" },
@@ -1212,7 +1252,7 @@ local function PrintHelp()
     print("|cff88ccffHekiLight|r commands:")
     print("  /hkl lock                  lock display position")
     print("  /hkl unlock                unlock display position")
-    print("  /hkl reset                 reset position to default")
+    print("  /hkl reset                 reset all settings to defaults")
     print("  /hkl scale <0.2–3.0>       set display scale")
     print("  /hkl size  <16–256>        set icon size in pixels")
     print("  /hkl suggestions <1–5>     set number of icon slots (default 3)")
@@ -1225,13 +1265,17 @@ local function PrintHelp()
     print("  /hkl minimap on|off        toggle minimap button")
     print("  /hkl hide dead on|off      toggle always-hide when dead")
     print("  /hkl hide cinematic on|off toggle always-hide during cinematics")
+    print("  /hkl hide mounted on|off   toggle always-hide when mounted")
+    print("  /hkl hide resting on|off   toggle always-hide when resting")
+    print("  /hkl hide vehicle on|off   toggle always-hide when in a vehicle")
+    print("  /hkl hide notarget on|off  toggle always-hide when no target")
     print("  /hkl show combat on|off    toggle show when in combat")
     print("  /hkl show target on|off    toggle show when target is attackable")
     print("  /hkl ignore <spellID>      hide a spell from the secondary list")
     print("  /hkl unignore <spellID>    re-show a spell in the secondary list")
     print("  /hkl ignorelist            list ignored spells")
     print("  /hkl debug                 toggle debug output")
-    print("  /hkl status                print current SBA state")
+    print("  /hkl status                print current Rotation Assistant state")
 end
 
 SLASH_HEKILIGHT1 = "/hekilight"
@@ -1250,9 +1294,13 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         print("|cff88ccffHekiLight:|r Display unlocked — drag to reposition.")
 
     elseif msg == "reset" then
-        db.x, db.y = DEFAULTS.x, DEFAULTS.y
+        wipe(db)
+        for k, v in pairs(DEFAULTS) do db[k] = v end
         ApplyPosition()
-        print("|cff88ccffHekiLight:|r Position reset.")
+        display:SetScale(db.scale)
+        ApplySlotLayout()
+        Refresh()
+        print("|cff88ccffHekiLight:|r All settings reset to defaults.")
 
     elseif msg:find("^scale%s") then
         local v = tonumber(msg:match("^scale%s+(.+)$"))
@@ -1363,7 +1411,7 @@ SlashCmdList["HEKILIGHT"] = function(msg)
             Refresh()
             print("|cff88ccffHekiLight:|r " .. def.label .. ": " .. state:upper())
         else
-            print("|cff88ccffHekiLight:|r Unknown flag. Valid: dead, cinematic")
+            print("|cff88ccffHekiLight:|r Unknown flag. Valid: dead, cinematic, mounted, resting, vehicle, notarget")
         end
 
     elseif msg:find("^show%s") then
@@ -1423,18 +1471,18 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         print("|cff88ccffHekiLight:|r Debug output " .. (DEBUG and "ON" or "OFF") .. ".")
 
     elseif msg == "status" then
-        local hasSBA      = C_ActionBar.HasAssistedCombatActionButtons()
+        local hasRA       = C_ActionBar.HasAssistedCombatActionButtons()
         local hasHighlight = GetCVarBool("assistedCombatHighlight")
         local hasEngine   = C_AssistedCombat.GetNextCastSpell ~= nil
 
         -- Detection mode summary
         local mode
-        if hasSBA and hasHighlight then
-            mode = "|cff00ff00SBA button + Action Bar Highlight|r"
-        elseif hasSBA then
-            mode = "|cffffff00SBA button only|r"
+        if hasRA and hasHighlight then
+            mode = "|cff00ff00Rotation Assistant + Assisted Highlight|r"
+        elseif hasRA then
+            mode = "|cffffff00Rotation Assistant only|r"
         elseif hasHighlight then
-            mode = "|cffffff00Action Bar Highlight only|r"
+            mode = "|cffffff00Assisted Highlight only|r"
         else
             mode = "|cffff4444none — rotation assistance is off|r"
         end
