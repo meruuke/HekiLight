@@ -1,0 +1,52 @@
+name: hekilight-wow
+version: 1.0.0
+short-title: HekiLight WoW Addon Squad
+description: >
+  Specialized agent squad for HekiLight — a single-file World of Warcraft addon
+  that overlays Rotation Assistant spell suggestions. Covers Lua development,
+  taint-safe WoW API usage, rotation AI design, in-game UI, release pipeline,
+  and addon quality review.
+author: mauro-pinheiro
+license: MIT
+slashPrefix: wow
+
+aiox:
+  minVersion: "2.1.0"
+  type: squad
+
+components:
+  agents:
+    - agents/wow-dev.md
+    - agents/wow-qa.md
+    - agents/wow-devops.md
+  tasks:
+    - tasks/addon-review.md
+    - tasks/addon-release.md
+    - tasks/addon-debug.md
+    - tasks/api-lookup.md
+  workflows:
+    - workflows/addon-feature.yaml
+  checklists:
+    - checklists/addon-release-checklist.md
+    - checklists/addon-review-checklist.md
+  templates: []
+  tools: []
+  scripts: []
+
+config:
+  extends: extend
+  coding-standards: config/coding-standards.md
+  tech-stack: config/tech-stack.md
+
+dependencies:
+  node: []
+  python: []
+  squads: []
+
+tags:
+  - wow
+  - lua
+  - addon
+  - rotation-ai
+  - hekilight
+  - world-of-warcraft

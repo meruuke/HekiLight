@@ -1,0 +1,64 @@
+metadata:
+  version: 1.0.0
+  lastUpdated: '2026-03-12T03:19:54.390Z'
+  entityCount: 0
+  checksumAlgorithm: sha256
+  resolutionRate: 0
+entities:
+  tasks: {}
+  templates: {}
+  scripts: {}
+  modules: {}
+  agents: {}
+  checklists: {}
+  data: {}
+  workflows: {}
+  utils: {}
+  tools: {}
+  infra-scripts: {}
+  infra-tools: {}
+  product-checklists: {}
+  product-data: {}
+categories:
+  - id: tasks
+    description: Executable task workflows for agent operations
+    basePath: .aiox-core/development/tasks
+  - id: templates
+    description: Document and code generation templates
+    basePath: .aiox-core/product/templates
+  - id: scripts
+    description: Utility and automation scripts
+    basePath: .aiox-core/development/scripts
+  - id: modules
+    description: Core framework modules and libraries
+    basePath: .aiox-core/core
+  - id: agents
+    description: Agent persona definitions and configurations
+    basePath: .aiox-core/development/agents
+  - id: checklists
+    description: Validation and review checklists
+    basePath: .aiox-core/development/checklists
+  - id: data
+    description: Configuration and reference data files
+    basePath: .aiox-core/data
+  - id: workflows
+    description: Multi-phase orchestration workflows
+    basePath: .aiox-core/development/workflows
+  - id: utils
+    description: Shared utility libraries and helpers
+    basePath: .aiox-core/core/utils
+  - id: tools
+    description: Development tool definitions and configurations
+    basePath: .aiox-core/development/tools
+  - id: infra-scripts
+    description: Infrastructure automation and utility scripts
+    basePath: .aiox-core/infrastructure/scripts
+  - id: infra-tools
+    description: Infrastructure tool definitions and configurations
+    basePath: .aiox-core/infrastructure/tools
+  - id: product-checklists
+    description: Product validation and review checklists
+    basePath: .aiox-core/product/checklists
+  - id: product-data
+    description: Product reference data and configuration files
+    basePath: .aiox-core/product/data

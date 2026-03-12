@@ -1,0 +1,35 @@
+name: addon-feature
+description: Full workflow for adding a new feature to HekiLight
+version: 1.0.0
+
+phases:
+  - id: design
+    agent: wow-dev
+    description: Design the feature — identify API surface, db keys, events needed
+    outputs:
+      - feature_spec: description of what will be added and where
+
+  - id: implement
+    agent: wow-dev
+    description: Implement the feature in HekiLight.lua
+    inputs:
+      - feature_spec
+    checklist:
+      - Add new db keys to DEFAULTS with sane defaults
+      - Add logic to ShouldShow if it's a visibility condition
+      - Add settings panel control if user-configurable
+      - Add slash command if appropriate
+      - Add to ALWAYS_HIDE_FLAGS or SHOW_FLAGS if it's a condition toggle
+      - Register any new events on the events frame
+      - Update PrintHelp() text
+
+  - id: review
+    agent: wow-qa
+    task: addon-review
+    description: Full quality gate before release
+
+  - id: release
+    agent: wow-devops
+    task: addon-release
+    description: Bump version, tag, push
+    condition: review.passed == true
