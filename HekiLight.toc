@@ -2,7 +2,7 @@
 ## Title: HekiLight
 ## Notes: Displays Blizzard's Rotation Assistant suggestions as a movable, skinnable icon overlay — inspired by Hekili.
 ## Author: Meruuke
-## Version: 0.1.5
+## Version: 0.1.6
 ## License: MIT
 ## X-Website: https://github.com/mauro-pinheiro/HekiLight
 ## X-GitHub: https://github.com/mauro-pinheiro/HekiLight
