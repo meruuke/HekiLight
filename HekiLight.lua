@@ -39,6 +39,12 @@ local DEFAULTS = {
     keybindColorR   = 1.0,  -- red channel (0–1)
     keybindColorG   = 1.0,  -- green channel (0–1)
     keybindColorB   = 1.0,  -- blue channel (0–1); use /hkl kbcolor 1 0.82 0 for WoW yellow
+    showMode          = "always", -- "always" | "active" (in combat or attackable target)
+    hideWhenDead      = true,
+    hideWhenVehicle   = true,
+    hideWhenCinematic = true,
+    keybindOutline    = "OUTLINE",      -- "OUTLINE" | "THICKOUTLINE" | ""
+    keybindAnchor     = "BOTTOMRIGHT",  -- "BOTTOMRIGHT" | "BOTTOMLEFT" | "TOPRIGHT" | "TOPLEFT" | "CENTER"
 }
 
 -- Spells auto-added to dbChar.ignoredSpells on first load for the matching
@@ -68,6 +74,7 @@ local CLASS_DEFAULT_IGNORED = {
 local db            -- points at HekiLightDB after ADDON_LOADED
 local dbChar        -- points at HekiLightDBChar after ADDON_LOADED (per-character)
 local inCombat    = false
+local inCinematic = false
 local elapsed     = 0
 -- Spells with a real cooldown (base CD > 1.5 s) that the player has cast.
 -- Used to grey secondary icons while the spell is on its real CD.
@@ -220,9 +227,35 @@ local function GetSpellKeybind(spellID)
     return ""
 end
 
--- ── UI Construction ───────────────────────────────────────────────────────────
+-- ── Visibility Gate ───────────────────────────────────────────────────────────
+
+local function ShouldShow()
+    -- Hard stops (always suppress regardless of mode)
+    if db.hideWhenDead and UnitIsDeadOrGhost("player") then
+        return false, "dead"
+    end
+    if db.hideWhenVehicle and (UnitInVehicle("player") or UnitHasVehicleUI("player")
+            or HasVehicleActionBar() or HasOverrideActionBar()) then
+        return false, "vehicle"
+    end
+    if db.hideWhenCinematic and inCinematic then
+        return false, "cinematic"
+    end
+    -- Show mode
+    local mode = db.showMode or "always"
+    if mode == "always" then
+        return true
+    elseif mode == "active" then
+        if inCombat then return true end
+        if UnitCanAttack("player", "target") then return true end
+        return false, "not in combat and no attackable target"
+    end
+    return true
+end
 
 local Refresh  -- forward declaration
+
+-- ── UI Construction ───────────────────────────────────────────────────────────
 
 -- Resize the container and reposition every slot sub-frame.
 -- Call whenever iconSize, iconSpacing, or numSuggestions changes.
@@ -243,8 +276,27 @@ local function ApplyKeybindStyle()
     for i = 1, MAX_SLOTS do
         local s = slots[i]
         if s and s.keybindText then
-            s.keybindText:SetFont("Fonts\\ARIALN.TTF", db.keybindFontSize, "OUTLINE")
+            s.keybindText:SetFont("Fonts\\ARIALN.TTF", db.keybindFontSize, db.keybindOutline or "OUTLINE")
             s.keybindText:SetTextColor(db.keybindColorR, db.keybindColorG, db.keybindColorB, 1)
+        end
+    end
+end
+
+local function ApplyKeybindAnchor()
+    local anchor = db.keybindAnchor or "BOTTOMRIGHT"
+    local offsets = {
+        BOTTOMRIGHT = { -2,  3 },
+        BOTTOMLEFT  = {  2,  3 },
+        TOPRIGHT    = { -2, -3 },
+        TOPLEFT     = {  2, -3 },
+        CENTER      = {  0,  0 },
+    }
+    local off = offsets[anchor] or offsets["BOTTOMRIGHT"]
+    for i = 1, MAX_SLOTS do
+        local s = slots[i]
+        if s and s.keybindText then
+            s.keybindText:ClearAllPoints()
+            s.keybindText:SetPoint(anchor, s.frame, anchor, off[1], off[2])
         end
     end
 end
@@ -326,9 +378,8 @@ local function BuildSlots()
             slot.rangeOverlay = rangeOvl
         end
 
-        -- Keybind label — all slots get one; style applied below via ApplyKeybindStyle()
+        -- Keybind label — all slots get one; style/anchor applied below via ApplyKeybindStyle()/ApplyKeybindAnchor()
         slot.keybindText = slot.frame:CreateFontString(nil, "OVERLAY")
-        slot.keybindText:SetPoint("BOTTOMRIGHT", slot.frame, "BOTTOMRIGHT", -2, 3)
 
         slot.frame:Hide()
         slots[i] = slot
@@ -336,6 +387,7 @@ local function BuildSlots()
 
     ApplySlotLayout()
     ApplyKeybindStyle()
+    ApplyKeybindAnchor()
     display:Hide()
     Log("BuildSlots complete, maxSlots=", MAX_SLOTS, "showing=", db.numSuggestions)
 end
@@ -419,12 +471,12 @@ end
 
 -- ── Settings Panel ────────────────────────────────────────────────────────────
 
-local BuildIgnorePanel   -- forward declaration; defined after BuildSettingsPanel
-
 local function BuildSettingsPanel()
+    -- Outer panel: FIXED height — registered with canvas, never overflows.
+    -- All scrollable content lives inside the UIPanelScrollFrameTemplate below.
     local panel = CreateFrame("Frame")
     panel.name = "HekiLight"
-    panel:SetSize(620, 600)   -- height is set below from actual column content
+    panel:SetSize(620, 560)
 
     local title = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     title:SetPoint("TOPLEFT", 16, -16)
@@ -435,21 +487,88 @@ local function BuildSettingsPanel()
     subtitle:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -4)
     subtitle:SetText("Rotation assistant icon overlay  |cff666666v" .. version .. "|r")
 
+    -- ScrollFrame: sits below the title, leaves 36 px at the bottom for the Reset button.
+    local scrollFrame = CreateFrame("ScrollFrame", "HekiLightScrollFrame", panel, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 0, -52)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -28, 36)
+
+    -- Content frame: scroll child. Width fixed; height computed by LayoutSections().
+    local content = CreateFrame("Frame", nil, scrollFrame)
+    content:SetWidth(592)   -- 620 - 28 (scrollbar)
+    scrollFrame:SetScrollChild(content)
+
+    -- Hide the scrollbar when all content fits; show it when content overflows.
+    -- OnScrollRangeChanged fires every time the scroll extent is recalculated.
+    local scrollBar = _G["HekiLightScrollFrameScrollBar"]
+    if scrollBar then
+        scrollFrame:SetScript("OnScrollRangeChanged", function(self, _, yRange)
+            scrollBar:SetShown(yRange and yRange > 0)
+        end)
+    end
+
+    -- ── Collapsible section system ────────────────────────────────────────────
+    local sectionList = {}
+
+    local function LayoutSections()
+        local y = -8
+        for _, sec in ipairs(sectionList) do
+            sec.header:ClearAllPoints()
+            sec.header:SetPoint("TOPLEFT",  content, "TOPLEFT",  0, y)
+            sec.header:SetPoint("TOPRIGHT", content, "TOPRIGHT", 0, y)
+            y = y - 26
+            if sec.isExpanded then
+                sec.body:ClearAllPoints()
+                sec.body:SetPoint("TOPLEFT", content, "TOPLEFT", 0, y)
+                sec.body:SetWidth(592)
+                sec.body:Show()
+                y = y - sec.body:GetHeight() - 4
+            else
+                sec.body:Hide()
+            end
+        end
+        content:SetHeight(math.abs(y) + 20)
+    end
+
+    local function MakeSection(label, startExpanded)
+        if startExpanded == nil then startExpanded = true end
+        local hdr = CreateFrame("Button", nil, content, "BackdropTemplate")
+        hdr:SetHeight(26)
+        hdr:SetBackdrop({
+            bgFile   = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            edgeSize = 1,
+        })
+        hdr:SetBackdropColor(0.08, 0.08, 0.08, 0.9)
+        hdr:SetBackdropBorderColor(0.25, 0.25, 0.25, 1)
+        local lbl = hdr:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        lbl:SetPoint("LEFT", 10, 0)
+        lbl:SetText("|cffffcc00" .. label .. "|r")
+        local toggle = hdr:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        toggle:SetPoint("RIGHT", -10, 0)
+        toggle:SetText(startExpanded and "-" or "+")
+        local body = CreateFrame("Frame", nil, content)
+        body:SetWidth(592)
+        body:SetHeight(10)
+        body:SetShown(startExpanded)
+        local sec = { header = hdr, body = body, isExpanded = startExpanded }
+        hdr:SetScript("OnClick", function()
+            sec.isExpanded = not sec.isExpanded
+            toggle:SetText(sec.isExpanded and "-" or "+")
+            LayoutSections()
+        end)
+        sectionList[#sectionList + 1] = sec
+        return sec, body
+    end
+
+    -- ── Widget helpers: (parent, cur, ...) where cur = {y = -8} ─────────────
     local checkboxRefs  = {}
     local sliderRefs    = {}
-    local swatchRefs    = {}
+    local radioRefs     = {}
     local panelUpdating = false
 
-    -- Two-column layout: left = Appearance/Display, right = Keybind Text/Minimap
-    local cols = {
-        left  = { x = 16,  y = -70 },
-        right = { x = 320, y = -70 },
-    }
-
-    local function AddCheckbox(label, tip, getValue, setValue, colName)
-        local col = cols[colName or "left"]
-        local cb = CreateFrame("CheckButton", nil, panel, "UICheckButtonTemplate")
-        cb:SetPoint("TOPLEFT", col.x, col.y)
+    local function CB(parent, cur, label, tip, getValue, setValue)
+        local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+        cb:SetPoint("TOPLEFT", 10, cur.y)
         cb.text:SetText(label)
         cb:SetChecked(getValue())
         cb:SetScript("OnClick", function(self) setValue(self:GetChecked()) end)
@@ -462,22 +581,16 @@ local function BuildSettingsPanel()
             end)
             cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
         end
-        table.insert(checkboxRefs, { cb = cb, getValue = getValue })
-        col.y = col.y - 28
-        return cb
+        checkboxRefs[#checkboxRefs + 1] = { cb = cb, getValue = getValue }
+        cur.y = cur.y - 28
     end
 
-    -- Custom slider: no global-name dependency (OptionsSliderTemplate is deprecated in 10.x+)
-    -- tip (optional): hover tooltip text shown on the slider label and track
-    local function AddSlider(label, min, max, step, getValue, setValue, colName, tip)
-        local col = cols[colName or "left"]
-
-        local labelStr = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        labelStr:SetPoint("TOPLEFT", col.x + 4, col.y)
+    local function SL(parent, cur, label, min, max, step, getValue, setValue, tip)
+        local labelStr = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        labelStr:SetPoint("TOPLEFT", 14, cur.y)
         labelStr:SetText(label .. ": " .. getValue())
-
-        local slider = CreateFrame("Slider", nil, panel, "BackdropTemplate")
-        slider:SetPoint("TOPLEFT", col.x + 4, col.y - 20)
+        local slider = CreateFrame("Slider", nil, parent, "BackdropTemplate")
+        slider:SetPoint("TOPLEFT", 14, cur.y - 20)
         slider:SetSize(240, 17)
         slider:SetOrientation("HORIZONTAL")
         slider:SetThumbTexture("Interface\\Buttons\\UI-SliderBar-Button-Horizontal")
@@ -496,249 +609,234 @@ local function BuildSettingsPanel()
             labelStr:SetText(label .. ": " .. val)
         end)
         if tip then
-            local showTip = function(self)
-                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-                GameTooltip:AddLine(label)
-                GameTooltip:AddLine(tip, 1, 1, 1, true)
-                GameTooltip:Show()
-            end
-            local hideTip = function() GameTooltip:Hide() end
-            slider:SetScript("OnEnter", showTip)
-            slider:SetScript("OnLeave", hideTip)
-        end
-
-        table.insert(sliderRefs, { slider = slider, labelStr = labelStr,
-                                   label = label, step = step, getValue = getValue })
-        col.y = col.y - 52
-        return slider
-    end
-
-    local function AddColorSwatch(label, colName, tip)
-        local col = cols[colName or "left"]
-
-        local labelStr = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        labelStr:SetPoint("TOPLEFT", col.x + 4, col.y)
-        labelStr:SetText(label)
-
-        local swatch = CreateFrame("Button", nil, panel, "BackdropTemplate")
-        swatch:SetSize(80, 20)
-        swatch:SetPoint("TOPLEFT", col.x + 4, col.y - 20)
-        swatch:SetBackdrop({
-            bgFile   = "Interface\\Buttons\\WHITE8X8",
-            edgeFile = "Interface\\Buttons\\WHITE8X8",
-            edgeSize = 1,
-        })
-        swatch:SetBackdropColor(db.keybindColorR, db.keybindColorG, db.keybindColorB, 1)
-        swatch:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
-
-        swatch:SetScript("OnClick", function()
-            ColorPickerFrame:SetupColorPickerAndShow({
-                swatchFunc = function()
-                    local r, g, b = ColorPickerFrame:GetColorRGB()
-                    db.keybindColorR, db.keybindColorG, db.keybindColorB = r, g, b
-                    swatch:SetBackdropColor(r, g, b, 1)
-                    ApplyKeybindStyle()
-                end,
-                cancelFunc = function(prev)
-                    db.keybindColorR, db.keybindColorG, db.keybindColorB = prev.r, prev.g, prev.b
-                    swatch:SetBackdropColor(prev.r, prev.g, prev.b, 1)
-                    ApplyKeybindStyle()
-                end,
-                hasOpacity = false,
-                r = db.keybindColorR,
-                g = db.keybindColorG,
-                b = db.keybindColorB,
-            })
-        end)
-
-        if tip then
-            swatch:SetScript("OnEnter", function(self)
+            slider:SetScript("OnEnter", function(self)
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:AddLine(label)
                 GameTooltip:AddLine(tip, 1, 1, 1, true)
                 GameTooltip:Show()
             end)
-            swatch:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            slider:SetScript("OnLeave", function() GameTooltip:Hide() end)
         end
-
-        table.insert(swatchRefs, { swatch = swatch })
-        col.y = col.y - 52
+        sliderRefs[#sliderRefs + 1] = { slider = slider, labelStr = labelStr,
+                                        label = label, step = step, getValue = getValue }
+        cur.y = cur.y - 52
     end
 
-    local function SectionHeader(text, colName)
-        local col = cols[colName or "left"]
-        local s = panel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-        s:SetPoint("TOPLEFT", col.x, col.y)
-        s:SetText("|cffffcc00" .. text .. "|r")
-        col.y = col.y - 22
+    local function RG(parent, cur, options, getValue, setValue)
+        local refs = {}
+        for _, opt in ipairs(options) do
+            local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+            cb:SetPoint("TOPLEFT", 10, cur.y)
+            cb.text:SetText(opt.label)
+            cb:SetChecked(getValue() == opt.value)
+            local capturedValue = opt.value
+            cb:SetScript("OnClick", function()
+                setValue(capturedValue)
+                for _, r in ipairs(refs) do r.cb:SetChecked(r.value == capturedValue) end
+                Refresh()
+            end)
+            if opt.tip then
+                cb:SetScript("OnEnter", function(self)
+                    GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                    GameTooltip:AddLine(opt.label)
+                    GameTooltip:AddLine(opt.tip, 1, 1, 1, true)
+                    GameTooltip:Show()
+                end)
+                cb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+            end
+            refs[#refs + 1] = { cb = cb, value = opt.value }
+            cur.y = cur.y - 28
+        end
+        radioRefs[#radioRefs + 1] = { refs = refs, getValue = getValue }
+        return refs
     end
 
-    -- ── Left Column: Appearance / Display Options ─────────────────────────────
-    SectionHeader("Appearance")
-    AddCheckbox("Lock position",
-        "Prevent the icon from being accidentally dragged. Use /hkl unlock or untick this to reposition it.",
+    local function SubHdr(parent, cur, label)
+        local s = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        s:SetPoint("TOPLEFT", 10, cur.y)
+        s:SetText("|cffaaaaaa" .. label .. "|r")
+        cur.y = cur.y - 20
+    end
+
+    -- ── Section: Appearance ──────────────────────────────────────────────────
+    local _, appBody = MakeSection("Appearance")
+    local cur = { y = -8 }
+    SL(appBody, cur, "Overall Scale", 0.2, 3.0, 0.1,
+        function() return db.scale end,
+        function(v) db.scale = v; display:SetScale(v) end,
+        "Scales the entire HekiLight overlay — icons, spacing, and keybind text.")
+    SL(appBody, cur, "Icon Size", 16, 256, 8,
+        function() return db.iconSize end,
+        function(v) db.iconSize = v; ApplySlotLayout(); Refresh() end,
+        "Sets the raw pixel size of the spell icon texture.")
+    SL(appBody, cur, "Spell Icon Slots", 1, 5, 1,
+        function() return db.numSuggestions end,
+        function(v) db.numSuggestions = v; ApplySlotLayout(); Refresh() end,
+        "Number of spell icons to display (1 = primary only, up to 5).")
+    SL(appBody, cur, "Icon Spacing", 0, 32, 2,
+        function() return db.iconSpacing end,
+        function(v) db.iconSpacing = v; ApplySlotLayout(); Refresh() end)
+    SL(appBody, cur, "Refresh Rate (s)", 0.02, 0.5, 0.01,
+        function() return db.pollRate end,
+        function(v) db.pollRate = v end,
+        "How often (seconds) the suggestion bar refreshes.")
+    CB(appBody, cur, "Lock position",
+        "Prevent the icon from being accidentally dragged. Use /hkl unlock to reposition it.",
         function() return db.locked end,
         function(v)
             db.locked = v
             display:EnableMouse(not v)
             print("|cff88ccffHekiLight:|r Position " .. (v and "locked." or "unlocked — drag to reposition."))
         end)
-    AddSlider("Overall Scale", 0.2, 3.0, 0.1,
-        function() return db.scale end,
-        function(v) db.scale = v; display:SetScale(v) end,
-        "left", "Scales the entire HekiLight overlay — icons, spacing, and keybind text. Use Icon Size for the raw pixel size of the icon texture.")
-    AddSlider("Icon Size", 16, 256, 8,
-        function() return db.iconSize end,
-        function(v) db.iconSize = v; ApplySlotLayout(); Refresh() end,
-        "left", "Sets the raw pixel size of the spell icon texture. Affects only the icon, not the spacing or keybind text.")
-    AddSlider("Spell Icon Slots", 1, 5, 1,
-        function() return db.numSuggestions end,
-        function(v) db.numSuggestions = v; ApplySlotLayout(); Refresh() end,
-        "left", "Number of spell icons to display in the suggestion bar (1 = primary only, up to 5).")
-    AddSlider("Icon Spacing", 0, 32, 2,
-        function() return db.iconSpacing end,
-        function(v) db.iconSpacing = v; ApplySlotLayout(); Refresh() end)
-    AddSlider("Refresh Rate (s)", 0.02, 0.5, 0.01,
-        function() return db.pollRate end,
-        function(v) db.pollRate = v end,
-        "left", "How often (in seconds) the suggestion bar refreshes. Lower = more responsive, higher = less CPU usage.")
+    appBody:SetHeight(math.abs(cur.y) + 8)
 
-    SectionHeader("Display Options")
-    AddCheckbox("Show keybind text",
+    -- ── Section: Display ─────────────────────────────────────────────────────
+    local _, dispBody = MakeSection("Display")
+    cur = { y = -8 }
+    CB(dispBody, cur, "Show keybind text",
         "Show the keybind for the suggested spell in the corner of the icon.",
         function() return db.showKeybind end,
         function(v) db.showKeybind = v; if not v then for i = 1, MAX_SLOTS do if slots[i] and slots[i].keybindText then slots[i].keybindText:Hide() end end end end)
-    AddCheckbox("Show out-of-range tint",
+    CB(dispBody, cur, "Show out-of-range tint",
         "Pulse the icon red when the suggested spell cannot reach your target.",
         function() return db.showOutOfRange end,
         function(v) db.showOutOfRange = v; if not v and slots[1] and slots[1].rangeOverlay then slots[1].rangeOverlay:Hide() end end)
-    AddCheckbox("Spell Proc Glow",
-        "Pulse the icon border gold when the suggested spell has an active proc glow (triggered ability highlight).",
+    CB(dispBody, cur, "Spell Proc Glow",
+        "Pulse the icon border gold when the suggested spell has an active proc glow.",
         function() return db.showProcGlow end,
         function(v) db.showProcGlow = v; if not v then StopGlowPulse() end end)
-    AddCheckbox("Show cooldown spiral",
-        "Display a cooldown sweep on the icon. May interfere with protected Blizzard UI elements and prevent ability usage. Enable only if you experience no issues.",
+    CB(dispBody, cur, "Show cooldown spiral",
+        "Display a cooldown sweep on the icon.",
         function() return db.showCooldown end,
         function(v) db.showCooldown = v; if not v and slots[1] and slots[1].cooldownFrame then slots[1].cooldownFrame:Hide() end end)
-    AddCheckbox("Play sounds",
+    CB(dispBody, cur, "Play sounds",
         "Play a subtle click when the icon appears as you enter combat.",
         function() return db.sounds end,
         function(v) db.sounds = v end)
-
-    -- ── Right Column: Keybind Text / Minimap ──────────────────────────────────
-    SectionHeader("Keybind Text", "right")
-    AddSlider("Keybind Font Size", 8, 24, 1,
-        function() return db.keybindFontSize end,
-        function(v) db.keybindFontSize = v; ApplyKeybindStyle(); Refresh() end,
-        "right", "Font size for the keybind label on each icon slot (8–24 pt).")
-    AddColorSwatch("Keybind Color", "right",
-        "Click to open the color picker. Sets the color of the keybind label on each icon slot.")
-
-    SectionHeader("Minimap", "right")
-    AddCheckbox("Show minimap button",
+    CB(dispBody, cur, "Show minimap button",
         "Show the HekiLight button on the minimap. Drag it to reposition.",
         function() return db.minimapShow ~= false end,
-        function(v)
-            db.minimapShow = v
-            if minimapBtn then minimapBtn:SetShown(v) end
-        end, "right")
+        function(v) db.minimapShow = v; if minimapBtn then minimapBtn:SetShown(v) end end)
+    dispBody:SetHeight(math.abs(cur.y) + 8)
 
-    -- ── Footer ───────────────────────────────────────────────────────────────
-    local footerY = math.min(cols.left.y, cols.right.y) - 16
+    -- ── Section: Keybind Style ───────────────────────────────────────────────
+    local _, kbBody = MakeSection("Keybind Style")
+    cur = { y = -8 }
+    SL(kbBody, cur, "Font Size", 8, 24, 1,
+        function() return db.keybindFontSize end,
+        function(v) db.keybindFontSize = v; ApplyKeybindStyle(); Refresh() end)
 
-    local resetBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
-    resetBtn:SetSize(140, 22)
-    resetBtn:SetPoint("TOPLEFT", 16, footerY)
-    resetBtn:SetText("Reset to Defaults")
-    resetBtn:SetScript("OnClick", function()
-        wipe(db)
-        for k, v in pairs(DEFAULTS) do db[k] = v end
-        ApplyPosition()
-        display:SetScale(db.scale)
-        ApplySlotLayout()
-        ApplyKeybindStyle()
-        Refresh()
-        for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
-        panelUpdating = true
-        for _, ref in ipairs(sliderRefs) do
-            local v = ref.getValue()
-            ref.slider:SetValue(v)
-            ref.labelStr:SetText(ref.label .. ": " .. v)
-        end
-        panelUpdating = false
-        for _, ref in ipairs(swatchRefs) do
-            ref.swatch:SetBackdropColor(db.keybindColorR, db.keybindColorG, db.keybindColorB, 1)
-        end
-        print("|cff88ccffHekiLight:|r All settings reset to defaults.")
+    -- Color label + swatch (not a standard widget, built inline)
+    local colorLblStr = kbBody:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    colorLblStr:SetPoint("TOPLEFT", 14, cur.y)
+    colorLblStr:SetText("Color")
+    cur.y = cur.y - 22
+    local colorSwatch = CreateFrame("Button", nil, kbBody, "BackdropTemplate")
+    colorSwatch:SetSize(80, 20)
+    colorSwatch:SetPoint("TOPLEFT", 14, cur.y)
+    colorSwatch:SetBackdrop({
+        bgFile   = "Interface\\Buttons\\WHITE8X8",
+        edgeFile = "Interface\\Buttons\\WHITE8X8",
+        edgeSize = 1,
+    })
+    colorSwatch:SetBackdropColor(db.keybindColorR, db.keybindColorG, db.keybindColorB, 1)
+    colorSwatch:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+    colorSwatch:SetScript("OnClick", function()
+        ColorPickerFrame:SetupColorPickerAndShow({
+            swatchFunc = function()
+                local r, g, b = ColorPickerFrame:GetColorRGB()
+                db.keybindColorR, db.keybindColorG, db.keybindColorB = r, g, b
+                colorSwatch:SetBackdropColor(r, g, b, 1)
+                ApplyKeybindStyle()
+            end,
+            cancelFunc = function(prev)
+                db.keybindColorR, db.keybindColorG, db.keybindColorB = prev.r, prev.g, prev.b
+                colorSwatch:SetBackdropColor(prev.r, prev.g, prev.b, 1)
+                ApplyKeybindStyle()
+            end,
+            hasOpacity = false,
+            r = db.keybindColorR, g = db.keybindColorG, b = db.keybindColorB,
+        })
     end)
-    footerY = footerY - 32
-
-    local footerHint = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    footerHint:SetPoint("TOPLEFT", 16, footerY)
-    footerHint:SetText("/hkl for quick commands  ·  Drag the icon in-game to reposition  ·  /hkl lock to prevent accidental moves")
-
-    panel:SetHeight(math.abs(footerY) + 30)
-
-    -- Refresh all controls when the panel opens
-    panel:SetScript("OnShow", function()
-        for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
-        panelUpdating = true
-        for _, ref in ipairs(sliderRefs) do
-            local v = ref.getValue()
-            ref.slider:SetValue(v)
-            ref.labelStr:SetText(ref.label .. ": " .. v)
-        end
-        panelUpdating = false
-        for _, ref in ipairs(swatchRefs) do
-            ref.swatch:SetBackdropColor(db.keybindColorR, db.keybindColorG, db.keybindColorB, 1)
-        end
+    colorSwatch:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:AddLine("Keybind Color")
+        GameTooltip:AddLine("Click to open the color picker.", 1, 1, 1, true)
+        GameTooltip:Show()
     end)
+    colorSwatch:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    cur.y = cur.y - 28
 
-    settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "HekiLight")
-    Settings.RegisterAddOnCategory(settingsCategory)
+    SubHdr(kbBody, cur, "Outline Style")
+    RG(kbBody, cur, {
+        { label = "Outline",       value = "OUTLINE",      tip = "Thin border around each character." },
+        { label = "Thick Outline", value = "THICKOUTLINE", tip = "Bold border — readable at small sizes." },
+        { label = "None",          value = "",             tip = "No outline — flat text." },
+    }, function() return db.keybindOutline or "OUTLINE" end,
+       function(v) db.keybindOutline = v; ApplyKeybindStyle() end)
 
-    BuildIgnorePanel(settingsCategory)
-end
+    SubHdr(kbBody, cur, "Corner Position")
+    RG(kbBody, cur, {
+        { label = "Bottom Right", value = "BOTTOMRIGHT" },
+        { label = "Bottom Left",  value = "BOTTOMLEFT"  },
+        { label = "Top Right",    value = "TOPRIGHT"    },
+        { label = "Top Left",     value = "TOPLEFT"     },
+        { label = "Center",       value = "CENTER"      },
+    }, function() return db.keybindAnchor or "BOTTOMRIGHT" end,
+       function(v) db.keybindAnchor = v; ApplyKeybindAnchor() end)
+    kbBody:SetHeight(math.abs(cur.y) + 8)
 
--- ── Ignored Spells Sub-Panel ──────────────────────────────────────────────────
--- Registered as a child category of the main HekiLight settings panel.
--- The canvas layout system handles scrolling automatically; we only need to
--- call subPanel:SetHeight() with the correct content height each time the list
--- changes so the canvas knows the scroll extent.
+    -- ── Section: Visibility ──────────────────────────────────────────────────
+    local _, visBody = MakeSection("Visibility")
+    cur = { y = -8 }
+    SubHdr(visBody, cur, "Show Overlay")
+    RG(visBody, cur, {
+        { label = "Always",
+          value = "always",
+          tip   = "Show the overlay whenever Rotation Assistant has a suggestion." },
+        { label = "In Combat or Attackable Target",
+          value = "active",
+          tip   = "Only show when in combat, or when you have an attackable target selected." },
+    }, function() return db.showMode or "always" end,
+       function(v) db.showMode = v end)
+    SubHdr(visBody, cur, "Always Hide When")
+    CB(visBody, cur, "Dead or Ghost",
+        "Hide the overlay while you are dead or a ghost.",
+        function() return db.hideWhenDead end,
+        function(v) db.hideWhenDead = v; Refresh() end)
+    CB(visBody, cur, "In a cinematic",
+        "Hide the overlay during in-game cinematics and movies.",
+        function() return db.hideWhenCinematic end,
+        function(v) db.hideWhenCinematic = v; Refresh() end)
+    CB(visBody, cur, "In a vehicle",
+        "Hide the overlay while riding a vehicle with its own action bar.",
+        function() return db.hideWhenVehicle end,
+        function(v) db.hideWhenVehicle = v; Refresh() end)
+    visBody:SetHeight(math.abs(cur.y) + 8)
 
-BuildIgnorePanel = function(parentCategory)
-    local subPanel = CreateFrame("Frame")
-    subPanel.name = "Ignored Spells"
-    subPanel:SetWidth(620)
-    subPanel:SetHeight(200)   -- placeholder; set precisely in RefreshIgnoreList
+    -- ── Section: Ignored Spells (collapsed by default) ───────────────────────
+    local ignoreSec, ignoreBody = MakeSection("Ignored Spells", false)
 
-    local title = subPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", 16, -16)
-    title:SetText("Ignored Spells")
-
-    local desc = subPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    desc:SetPoint("TOPLEFT", 16, -44)
-    desc:SetWidth(590)
-    desc:SetJustifyH("LEFT")
-    desc:SetText("Spells hidden from the secondary suggestion list. Use the dropdown to select a spell from your current rotation, then click Add.\n|cffaaaaaa Requires Rotation Assistant to be active — enter combat or enable it manually to populate the list.|r")
-
-    -- y cursor: below the description block (~2 lines × 14 px + padding)
-    local controlY = -80
+    local ignoreDesc = ignoreBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    ignoreDesc:SetPoint("TOPLEFT", 10, -8)
+    ignoreDesc:SetWidth(570)
+    ignoreDesc:SetJustifyH("LEFT")
+    ignoreDesc:SetText("Spells hidden from the secondary suggestion list. Select a spell and click Add.\n|cffaaaaaa Requires Rotation Assistant to be active.|r")
 
     local selectedIgnoreSpellID = nil
     local rowPool = {}
-    local PopulateRotationDropdown
-    local RefreshIgnoreList
+    local ignoreEmptyLabel = nil
+    local RefreshIgnoreList      -- forward declaration
 
-    -- UIDropDownMenu has ~18 px inherent left padding; offset by -2 to align visually
-    local ignoreDD = CreateFrame("Frame", "HekiLightIgnoreDropdown", subPanel, "UIDropDownMenuTemplate")
-    ignoreDD:SetPoint("TOPLEFT", -2, controlY)
-    UIDropDownMenu_SetWidth(ignoreDD, 270)
+    -- UIDropDownMenu has ~18 px inherent left padding; offset by -2 to align
+    local ignoreDD = CreateFrame("Frame", "HekiLightIgnoreDropdown", ignoreBody, "UIDropDownMenuTemplate")
+    ignoreDD:SetPoint("TOPLEFT", -2, -46)
+    UIDropDownMenu_SetWidth(ignoreDD, 240)
     UIDropDownMenu_SetText(ignoreDD, "Select a rotation spell...")
 
-    local addBtn = CreateFrame("Button", nil, subPanel, "UIPanelButtonTemplate")
+    local addBtn = CreateFrame("Button", nil, ignoreBody, "UIPanelButtonTemplate")
     addBtn:SetPoint("LEFT", ignoreDD, "RIGHT", -4, 2)
-    addBtn:SetSize(150, 22)
+    addBtn:SetSize(130, 22)
     addBtn:SetText("Add to ignore list")
     addBtn:SetScript("OnClick", function()
         if not selectedIgnoreSpellID then
@@ -758,83 +856,73 @@ BuildIgnorePanel = function(parentCategory)
         RefreshIgnoreList()
     end)
 
-    -- First row starts this far below the dropdown row
-    local listBaseY = controlY - 36
+    local ignoreListBaseY = -82  -- below the dropdown row
 
-    PopulateRotationDropdown = function()
-        -- Register the dropdown callback. Data is fetched live each time the
-        -- dropdown opens so it is never stale after login/reload or when
-        -- Rotation Assistant becomes active mid-session.
-        UIDropDownMenu_Initialize(ignoreDD, function(self, level)
-            local entries = {}
-            local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
-            -- Fall back to the last list seen by the poll loop so the dropdown
-            -- is never empty when the panel is opened before RA has been queried.
-            if not (ok and type(rotSpells) == "table" and #rotSpells > 0) then
-                rotSpells = cachedRotSpells
-            end
-            for _, sid in ipairs(rotSpells) do
-                if IsPlayerSpell(sid) then
-                    local si = C_Spell.GetSpellInfo(sid)
-                    if si then
-                        entries[#entries + 1] = {
-                            sid     = sid,
-                            name    = si.name,
-                            iconID  = si.iconID,
-                            ignored = dbChar.ignoredSpells[sid],
-                        }
-                    end
+    -- Dropdown initializer: data fetched live on every open (never stale)
+    UIDropDownMenu_Initialize(ignoreDD, function(self, level)
+        local entries = {}
+        local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
+        if not (ok and type(rotSpells) == "table" and #rotSpells > 0) then
+            rotSpells = cachedRotSpells
+        end
+        for _, sid in ipairs(rotSpells) do
+            if IsPlayerSpell(sid) then
+                local si = C_Spell.GetSpellInfo(sid)
+                if si then
+                    entries[#entries + 1] = {
+                        sid     = sid,
+                        name    = si.name,
+                        iconID  = si.iconID,
+                        ignored = dbChar.ignoredSpells[sid],
+                    }
                 end
             end
-
-            if #entries == 0 then
-                local info    = UIDropDownMenu_CreateInfo()
-                info.text     = "|cff888888No rotation spells available|r"
-                info.disabled = true
-                UIDropDownMenu_AddButton(info, level)
-                return
-            end
-            for _, entry in ipairs(entries) do
-                local info    = UIDropDownMenu_CreateInfo()
-                info.text     = (entry.ignored and "|cff888888" or "")
-                                .. entry.name
-                                .. "  |cff666666[" .. entry.sid .. "]|r"
-                                .. (entry.ignored and " (hidden)|r" or "")
-                info.icon     = entry.iconID
-                info.disabled = entry.ignored
-                if not entry.ignored then
-                    local capturedSid  = entry.sid
-                    local capturedName = entry.name
-                    info.func = function()
-                        selectedIgnoreSpellID = capturedSid
-                        UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
-                    end
+        end
+        if #entries == 0 then
+            local info    = UIDropDownMenu_CreateInfo()
+            info.text     = "|cff888888No rotation spells available|r"
+            info.disabled = true
+            UIDropDownMenu_AddButton(info, level)
+            return
+        end
+        for _, entry in ipairs(entries) do
+            local info    = UIDropDownMenu_CreateInfo()
+            info.text     = (entry.ignored and "|cff888888" or "")
+                            .. entry.name
+                            .. "  |cff666666[" .. entry.sid .. "]|r"
+                            .. (entry.ignored and " (hidden)|r" or "")
+            info.icon     = entry.iconID
+            info.disabled = entry.ignored
+            if not entry.ignored then
+                local capturedSid  = entry.sid
+                local capturedName = entry.name
+                info.func = function()
+                    selectedIgnoreSpellID = capturedSid
+                    UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
                 end
-                UIDropDownMenu_AddButton(info, level)
             end
-        end)
-    end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
 
     RefreshIgnoreList = function()
         for _, row in ipairs(rowPool) do row:Hide() end
-
         local sorted = {}
         for sid in pairs(dbChar.ignoredSpells) do sorted[#sorted + 1] = sid end
         table.sort(sorted)
-
         local rowIdx = 0
         for _, sid in ipairs(sorted) do
             rowIdx = rowIdx + 1
             local row = rowPool[rowIdx]
             if not row then
-                row = CreateFrame("Frame", nil, subPanel)
-                row:SetSize(596, 24)
+                row = CreateFrame("Frame", nil, ignoreBody)
+                row:SetSize(570, 24)
                 row.icon = row:CreateTexture(nil, "ARTWORK")
                 row.icon:SetSize(20, 20)
                 row.icon:SetPoint("LEFT", 4, 0)
                 row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
                 row.label:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-                row.label:SetWidth(490)
+                row.label:SetWidth(460)
                 row.label:SetJustifyH("LEFT")
                 row.removeBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
                 row.removeBtn:SetSize(70, 20)
@@ -842,36 +930,27 @@ BuildIgnorePanel = function(parentCategory)
                 row.removeBtn:SetText("Remove")
                 rowPool[rowIdx] = row
             end
-
             local capturedSid = sid
             local si = C_Spell.GetSpellInfo(sid)
             row.icon:SetTexture(si and si.iconID or "Interface\\Icons\\INV_Misc_QuestionMark")
-            row.label:SetText((si and si.name or "(unknown)")
-                              .. "  |cff888888[" .. sid .. "]|r")
+            row.label:SetText((si and si.name or "(unknown)") .. "  |cff888888[" .. sid .. "]|r")
             row.removeBtn:SetScript("OnClick", function()
                 dbChar.ignoredSpells[capturedSid] = nil
                 RefreshIgnoreList()
             end)
-            row:SetPoint("TOPLEFT", 16, listBaseY - (rowIdx - 1) * 30)
+            row:SetPoint("TOPLEFT", 10, ignoreListBaseY - (rowIdx - 1) * 30)
             row:Show()
         end
-
-        if not subPanel.ignoreEmptyLabel then
-            subPanel.ignoreEmptyLabel = subPanel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-            subPanel.ignoreEmptyLabel:SetPoint("TOPLEFT", 16, listBaseY)
-            subPanel.ignoreEmptyLabel:SetText("No spells are currently ignored.")
+        if not ignoreEmptyLabel then
+            ignoreEmptyLabel = ignoreBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+            ignoreEmptyLabel:SetPoint("TOPLEFT", 10, ignoreListBaseY)
+            ignoreEmptyLabel:SetText("No spells are currently ignored.")
         end
-        subPanel.ignoreEmptyLabel:SetShown(rowIdx == 0)
-
-        -- Set sub-panel height so the canvas layout knows the full scroll extent.
-        -- abs(listBaseY) = distance from top to first row; rowIdx * 26 = list height;
-        -- 56 = bottom padding that keeps the footer clear.
-        subPanel:SetHeight(math.abs(listBaseY) + math.max(rowIdx * 26, 20) + 56)
+        ignoreEmptyLabel:SetShown(rowIdx == 0)
+        ignoreBody:SetHeight(math.abs(ignoreListBaseY) + math.max(rowIdx * 30, 20) + 16)
+        LayoutSections()
     end
 
-    -- Returns how many rotation spells are available (live or cached).
-    -- Also updates cachedRotSpells when live data is found, so a subsequent
-    -- dropdown click will have data even if it was empty on the first open.
     local function CountRotationSpells()
         local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
         if ok and type(rotSpells) == "table" and #rotSpells > 0 then
@@ -881,16 +960,12 @@ BuildIgnorePanel = function(parentCategory)
             rotSpells = cachedRotSpells
         end
         local n = 0
-        for _, sid in ipairs(rotSpells) do
-            if IsPlayerSpell(sid) then n = n + 1 end
-        end
+        for _, sid in ipairs(rotSpells) do if IsPlayerSpell(sid) then n = n + 1 end end
         return n
     end
 
-    -- Update the dropdown hint label to reflect current RA availability.
-    -- Called immediately on panel open and then every second by the ticker.
     local function UpdateDropdownHint()
-        if selectedIgnoreSpellID then return end  -- don't overwrite an active selection
+        if selectedIgnoreSpellID then return end
         local n = CountRotationSpells()
         if n > 0 then
             UIDropDownMenu_SetText(ignoreDD, n .. " spell" .. (n == 1 and "" or "s") .. " available — click to select")
@@ -899,24 +974,83 @@ BuildIgnorePanel = function(parentCategory)
         end
     end
 
-    subPanel:SetScript("OnShow", function()
-        PopulateRotationDropdown()
-        RefreshIgnoreList()
-        UpdateDropdownHint()  -- immediate update; no waiting for the first tick
-        -- Continue polling once per second to catch RA becoming active mid-session.
-        if subPanel.availabilityTicker then subPanel.availabilityTicker:Cancel() end
-        subPanel.availabilityTicker = C_Timer.NewTicker(0.5, UpdateDropdownHint)
-    end)
-
-    subPanel:SetScript("OnHide", function()
-        if subPanel.availabilityTicker then
-            subPanel.availabilityTicker:Cancel()
-            subPanel.availabilityTicker = nil
+    -- Wrap the section toggle to start/stop the hint ticker
+    local origIgnoreClick = ignoreSec.header:GetScript("OnClick")
+    ignoreSec.header:SetScript("OnClick", function(self)
+        origIgnoreClick(self)
+        if ignoreSec.isExpanded then
+            RefreshIgnoreList()
+            UpdateDropdownHint()
+            if not ignoreSec.ticker then
+                ignoreSec.ticker = C_Timer.NewTicker(0.5, UpdateDropdownHint)
+            end
+        else
+            if ignoreSec.ticker then ignoreSec.ticker:Cancel(); ignoreSec.ticker = nil end
         end
     end)
 
-    local ignoreCategory = Settings.RegisterCanvasLayoutSubcategory(parentCategory, subPanel, "Ignored Spells")
-    Settings.RegisterAddOnCategory(ignoreCategory)
+    -- ── Reset button (anchored to panel, always visible outside the scroll) ──
+    local resetBtn = CreateFrame("Button", nil, panel, "UIPanelButtonTemplate")
+    resetBtn:SetSize(140, 22)
+    resetBtn:SetPoint("BOTTOMLEFT", 16, 8)
+    resetBtn:SetText("Reset to Defaults")
+    resetBtn:SetScript("OnClick", function()
+        wipe(db)
+        for k, v in pairs(DEFAULTS) do db[k] = v end
+        ApplyPosition()
+        display:SetScale(db.scale)
+        ApplySlotLayout()
+        ApplyKeybindStyle()
+        ApplyKeybindAnchor()
+        Refresh()
+        for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
+        for _, entry in ipairs(radioRefs) do
+            local val = entry.getValue()
+            for _, r in ipairs(entry.refs) do r.cb:SetChecked(r.value == val) end
+        end
+        panelUpdating = true
+        for _, ref in ipairs(sliderRefs) do
+            local v = ref.getValue()
+            ref.slider:SetValue(v)
+            ref.labelStr:SetText(ref.label .. ": " .. v)
+        end
+        panelUpdating = false
+        colorSwatch:SetBackdropColor(db.keybindColorR, db.keybindColorG, db.keybindColorB, 1)
+        print("|cff88ccffHekiLight:|r All settings reset to defaults.")
+    end)
+
+    -- ── OnShow / OnHide sync ─────────────────────────────────────────────────
+    panel:SetScript("OnShow", function()
+        for _, ref in ipairs(checkboxRefs) do ref.cb:SetChecked(ref.getValue()) end
+        for _, entry in ipairs(radioRefs) do
+            local val = entry.getValue()
+            for _, r in ipairs(entry.refs) do r.cb:SetChecked(r.value == val) end
+        end
+        panelUpdating = true
+        for _, ref in ipairs(sliderRefs) do
+            local v = ref.getValue()
+            ref.slider:SetValue(v)
+            ref.labelStr:SetText(ref.label .. ": " .. v)
+        end
+        panelUpdating = false
+        colorSwatch:SetBackdropColor(db.keybindColorR, db.keybindColorG, db.keybindColorB, 1)
+        if ignoreSec.isExpanded then
+            RefreshIgnoreList()
+            UpdateDropdownHint()
+            if not ignoreSec.ticker then
+                ignoreSec.ticker = C_Timer.NewTicker(0.5, UpdateDropdownHint)
+            end
+        end
+    end)
+
+    panel:SetScript("OnHide", function()
+        if ignoreSec.ticker then ignoreSec.ticker:Cancel(); ignoreSec.ticker = nil end
+    end)
+
+    LayoutSections()
+
+    settingsCategory = Settings.RegisterCanvasLayoutCategory(panel, "HekiLight")
+    Settings.RegisterAddOnCategory(settingsCategory)
 end
 
 -- ── Spell Suggestion Detection ───────────────────────────────────────────────
@@ -1146,6 +1280,15 @@ end
 Refresh = function()
     if #slots == 0 then return end  -- BuildSlots not yet called
 
+    local showOk, reason = ShouldShow()
+    if not showOk then
+        currentSuggestionID = nil
+        StopGlowPulse()
+        display:Hide()
+        Log("display suppressed — reason:", reason)
+        return
+    end
+
     local queue   = GetSuggestionQueue(db.numSuggestions)
     local primary = queue[1]
 
@@ -1279,6 +1422,15 @@ events:RegisterEvent("ACTIONBAR_UPDATE_STATE")  -- fires when Rotation Assistant
 events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")  -- proc glow appears
 events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")  -- proc glow fades
 events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")             -- track real-CD casts for grey filter
+events:RegisterEvent("UNIT_FLAGS")
+events:RegisterEvent("UNIT_HEALTH")
+events:RegisterEvent("UNIT_ENTERED_VEHICLE")
+events:RegisterEvent("UNIT_EXITED_VEHICLE")
+events:RegisterEvent("CINEMATIC_START")
+events:RegisterEvent("CINEMATIC_STOP")
+events:RegisterEvent("PLAY_MOVIE")
+events:RegisterEvent("STOP_MOVIE")
+events:RegisterEvent("PLAYER_TARGET_CHANGED")
 
 events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     if event == "ADDON_LOADED" and arg1 == ADDON_NAME then
@@ -1357,10 +1509,42 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
                 recentlyCastSpells[arg3] = true
             end
         end
+
+    elseif event == "CINEMATIC_START" or event == "PLAY_MOVIE" then
+        inCinematic = true; display:Hide()
+
+    elseif event == "CINEMATIC_STOP" or event == "STOP_MOVIE" then
+        inCinematic = false; Refresh()
+
+    elseif event == "UNIT_FLAGS" or event == "UNIT_HEALTH" then
+        if arg1 == "player" then Refresh() end
+
+    elseif event == "UNIT_ENTERED_VEHICLE" then
+        if arg1 == "player" then Refresh() end
+
+    elseif event == "UNIT_EXITED_VEHICLE" then
+        if arg1 == "player" then Refresh() end
+
+    elseif event == "PLAYER_TARGET_CHANGED" then
+        Refresh()
     end
 end)
 
 -- ── Slash Commands ────────────────────────────────────────────────────────────
+
+local SHOW_MODES  = { always = true, active = true }
+local KB_OUTLINES = { outline = "OUTLINE", thick = "THICKOUTLINE", none = "" }
+local KB_ANCHORS  = {
+    bottomright = "BOTTOMRIGHT", bottomleft = "BOTTOMLEFT",
+    topright    = "TOPRIGHT",    topleft    = "TOPLEFT",
+    center      = "CENTER",
+}
+
+local ALWAYS_HIDE_FLAGS = {
+    dead      = { key = "hideWhenDead",      label = "Always hide when dead" },
+    vehicle   = { key = "hideWhenVehicle",   label = "Always hide in a vehicle" },
+    cinematic = { key = "hideWhenCinematic", label = "Always hide during cinematics" },
+}
 
 -- Data-driven condition maps for slash commands.
 local function PrintHelp()
@@ -1379,6 +1563,12 @@ local function PrintHelp()
     print("  /hkl sounds on|off         toggle combat sounds")
     print("  /hkl kbsize <8–24>         set keybind text font size")
     print("  /hkl kbcolor <r> <g> <b>   set keybind text color (0–1 each; e.g. 1 0.82 0 = yellow)")
+    print("  /hkl kboutline outline|thick|none  set keybind text outline style")
+    print("  /hkl kbanchor br|bl|tr|tl|center   set keybind text corner position")
+    print("  /hkl show always|active    set show mode (active = in combat or attackable target)")
+    print("  /hkl hide dead on|off      toggle hide when dead")
+    print("  /hkl hide vehicle on|off   toggle hide in vehicle")
+    print("  /hkl hide cinematic on|off toggle hide during cinematics")
     print("  /hkl minimap on|off        toggle minimap button")
     print("  /hkl ignore <spellID>      hide a spell from the secondary list")
     print("  /hkl unignore <spellID>    re-show a spell in the secondary list")
@@ -1523,6 +1713,49 @@ SlashCmdList["HEKILIGHT"] = function(msg)
             print("|cff88ccffHekiLight:|r Keybind color set.")
         else
             print("|cff88ccffHekiLight:|r Usage: /hkl kbcolor <r> <g> <b>  (values 0–1, e.g. 1 0.82 0 for yellow)")
+        end
+
+    elseif msg:find("^kboutline%s") then
+        local arg = strtrim(msg:match("^kboutline%s+(.+)$") or "")
+        local val = KB_OUTLINES[arg]
+        if val ~= nil then
+            db.keybindOutline = val
+            ApplyKeybindStyle()
+            print("|cff88ccffHekiLight:|r Keybind outline → " .. (arg == "none" and "none" or arg))
+        else
+            print("|cff88ccffHekiLight:|r Usage: /hkl kboutline outline|thick|none")
+        end
+
+    elseif msg:find("^kbanchor%s") then
+        local arg = strtrim(msg:match("^kbanchor%s+(.+)$") or "")
+        local val = KB_ANCHORS[arg]
+        if val then
+            db.keybindAnchor = val
+            ApplyKeybindAnchor()
+            print("|cff88ccffHekiLight:|r Keybind anchor → " .. val)
+        else
+            print("|cff88ccffHekiLight:|r Usage: /hkl kbanchor bottomright|bottomleft|topright|topleft|center")
+        end
+
+    elseif msg:find("^show%s") then
+        local arg = strtrim(msg:match("^show%s+(.+)$") or "")
+        if SHOW_MODES[arg] then
+            db.showMode = arg
+            Refresh()
+            print("|cff88ccffHekiLight:|r Show mode → " .. arg)
+        else
+            print("|cff88ccffHekiLight:|r Usage: /hkl show always|active")
+        end
+
+    elseif msg:find("^hide%s") then
+        local flag, toggle = msg:match("^hide%s+(%a+)%s+(on|off)$")
+        local entry = flag and ALWAYS_HIDE_FLAGS[flag]
+        if entry and toggle then
+            db[entry.key] = (toggle == "on")
+            Refresh()
+            print("|cff88ccffHekiLight:|r " .. entry.label .. " → " .. toggle)
+        else
+            print("|cff88ccffHekiLight:|r Usage: /hkl hide dead|vehicle|cinematic on|off")
         end
 
     elseif msg == "minimap on" then
