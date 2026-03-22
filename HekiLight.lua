@@ -497,15 +497,6 @@ local function BuildSettingsPanel()
     content:SetWidth(592)   -- 620 - 28 (scrollbar)
     scrollFrame:SetScrollChild(content)
 
-    -- Hide the scrollbar when all content fits; show it when content overflows.
-    -- OnScrollRangeChanged fires every time the scroll extent is recalculated.
-    local scrollBar = _G["HekiLightScrollFrameScrollBar"]
-    if scrollBar then
-        scrollFrame:SetScript("OnScrollRangeChanged", function(self, _, yRange)
-            scrollBar:SetShown(yRange and yRange > 0)
-        end)
-    end
-
     -- ── Collapsible section system ────────────────────────────────────────────
     local sectionList = {}
 
@@ -530,7 +521,7 @@ local function BuildSettingsPanel()
     end
 
     local function MakeSection(label, startExpanded)
-        if startExpanded == nil then startExpanded = true end
+        if startExpanded == nil then startExpanded = false end
         local hdr = CreateFrame("Button", nil, content, "BackdropTemplate")
         hdr:SetHeight(26)
         hdr:SetBackdrop({
