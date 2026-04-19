@@ -24,6 +24,7 @@ local sessionLog      = {}
 local lastLogSuggID   = nil
 local lastSlotSpellID   = {}  -- [slotIndex] = last spellID logged for that slot (change-detect)
 local lastSkippedAlertID = nil  -- last currentAlertSpellID logged as SKIPPED (change-detect)
+local lastRangeFailSlot  = nil  -- last rslot that failed IsActionInRange pcall (change-detect)
 
 -- Session event recorder — logs significant state changes (not every tick) to
 -- HekiLightDB.sessionLog so they survive until the next /reload.
@@ -125,7 +126,7 @@ local PLACEHOLDER_ICON    = "Interface\\Icons\\INV_Misc_QuestionMark"
 -- Pre-allocated suggestion queue — reused every poll to avoid per-frame table allocation.
 -- GetSuggestionQueue wipes and repopulates these in-place; callers index queue[1..n].
 local queueCache = {}
-for i = 1, MAX_SLOTS do queueCache[i] = { spellID = nil, realSlotID = nil, onCooldown = false } end
+for i = 1, MAX_SLOTS do queueCache[i] = { spellID = nil, realSlotID = nil, onCooldown = false, overrideSpellID = false } end
 local queueCount = 0  -- number of valid entries populated in the last GetSuggestionQueue call
 
 -- Last non-empty result from C_AssistedCombat.GetRotationSpells().
@@ -560,7 +561,7 @@ local function UpdateMinimapPos()
 end
 
 local function BuildMinimapButton()
-    minimapBtn = CreateFrame("Button", "HekiLightMinimapButton", UIParent)
+    minimapBtn = CreateFrame("Button", "HekiLightMinimapButton", Minimap)
     minimapBtn:SetSize(32, 32)
     minimapBtn:SetFrameStrata("MEDIUM")
     minimapBtn:SetFrameLevel(8)
@@ -1363,6 +1364,25 @@ local function GetRealSlot(spellID)
     return nil
 end
 
+-- Returns realSlotID and effectiveSpellID for a secondary rotation spell.
+-- GetRotationSpells() returns base IDs; this mirrors the override resolution in
+-- GetActiveSuggestion so dedup and icon display are correct for talent replacements
+-- (e.g. Defile shows Defile icon and deduplicates against primaryID correctly).
+local function resolveSecondary(sid)
+    local rslot = GetRealSlot(sid)
+    local effectiveID = sid
+    if rslot then
+        local ok, oid = pcall(function()
+            local t, id = GetActionInfo(rslot)
+            return (t == "spell") and id or nil
+        end)
+        if ok and oid and oid ~= sid then
+            effectiveID = oid
+        end
+    end
+    return rslot, effectiveID
+end
+
 -- Returns up to n { spellID, realSlotID } entries representing the current
 -- rotation queue.  Slot 1 is always the active Rotation Assistant suggestion (GetNextCastSpell).
 -- Slots 2..n come from C_AssistedCombat.GetRotationSpells() (Midnight 12.0+).
@@ -1372,9 +1392,10 @@ end
 local function GetSuggestionQueue(n)
     -- Wipe entries from the previous call so stale spellIDs are never read.
     for i = 1, queueCount do
-        queueCache[i].spellID    = nil
-        queueCache[i].realSlotID = nil
-        queueCache[i].onCooldown = false
+        queueCache[i].spellID        = nil
+        queueCache[i].realSlotID     = nil
+        queueCache[i].onCooldown     = false
+        queueCache[i].overrideSpellID = false
     end
     queueCount = 0
 
@@ -1396,12 +1417,19 @@ local function GetSuggestionQueue(n)
             -- Pass 1: off-cooldown spells fill slots first (high priority)
             for _, sid in ipairs(rotSpells) do
                 if queueCount >= n then break end
-                if sid ~= primaryID and not dbChar.ignoredSpells[sid] and IsPlayerSpell(sid) then
-                    if not IsSpellOnCooldown(sid) then
+                if not dbChar.ignoredSpells[sid] and IsPlayerSpell(sid) then
+                    local rslot, effectiveID = resolveSecondary(sid)
+                    -- Dedup against primaryID using the effective (cast) ID, not the base ID.
+                    -- GetRotationSpells returns base IDs; primaryID is an override ID.
+                    if effectiveID ~= primaryID and not IsSpellOnCooldown(sid) then
+                        if effectiveID ~= sid then
+                            DLog("OVERRIDE", string.format("secondary spellID %d → %d via slot %d", sid, effectiveID, rslot))
+                        end
                         queueCount = queueCount + 1
-                        queueCache[queueCount].spellID    = sid
-                        queueCache[queueCount].realSlotID = GetRealSlot(sid)
-                        queueCache[queueCount].onCooldown = false
+                        queueCache[queueCount].spellID        = sid
+                        queueCache[queueCount].realSlotID     = rslot
+                        queueCache[queueCount].overrideSpellID = effectiveID ~= sid and effectiveID or false
+                        queueCache[queueCount].onCooldown     = false
                     end
                 end
             end
@@ -1409,12 +1437,14 @@ local function GetSuggestionQueue(n)
             if queueCount < n then
                 for _, sid in ipairs(rotSpells) do
                     if queueCount >= n then break end
-                    if sid ~= primaryID and not dbChar.ignoredSpells[sid] and IsPlayerSpell(sid) then
-                        if IsSpellOnCooldown(sid) then
+                    if not dbChar.ignoredSpells[sid] and IsPlayerSpell(sid) then
+                        local rslot, effectiveID = resolveSecondary(sid)
+                        if effectiveID ~= primaryID and IsSpellOnCooldown(sid) then
                             queueCount = queueCount + 1
-                            queueCache[queueCount].spellID    = sid
-                            queueCache[queueCount].realSlotID = GetRealSlot(sid)
-                            queueCache[queueCount].onCooldown = true
+                            queueCache[queueCount].spellID        = sid
+                            queueCache[queueCount].realSlotID     = rslot
+                            queueCache[queueCount].overrideSpellID = effectiveID ~= sid and effectiveID or false
+                            queueCache[queueCount].onCooldown     = true
                         end
                     end
                 end
@@ -1667,7 +1697,8 @@ Refresh = function()
         end
 
         if entry and entry.spellID then
-            local si = (i == 1) and primaryInfo or C_Spell.GetSpellInfo(entry.spellID)
+            local iconID = (i == 1) and entry.spellID or (entry.overrideSpellID or entry.spellID)
+            local si = (i == 1) and primaryInfo or C_Spell.GetSpellInfo(iconID)
             if si and si.iconID then
                 if i > 1 and lastSlotSpellID[i] ~= entry.spellID then
                     DLog("SLOT", string.format("slot=%d spellID=%d (%s)", i, entry.spellID, si.name or "?"))
@@ -1677,10 +1708,8 @@ Refresh = function()
                 slot.iconTexture:SetDesaturated(i > 1 and entry.onCooldown)
                 slot.frame:Show()
                 if db.showKeybind and slot.keybindText then
-                    -- Prefer realSlotID for lookup: avoids FindSpellActionButtons(overrideID)
-                    -- failing for talent-replaced spells (e.g. Defile replacing Death and Decay).
                     local kb = entry.realSlotID and GetSlotKeybind(entry.realSlotID)
-                               or GetSpellKeybind(entry.spellID)
+                               or GetSpellKeybind(entry.overrideSpellID or entry.spellID)
                     slot.keybindText:SetText(kb)
                     slot.keybindText:Show()
                 elseif slot.keybindText then
@@ -1744,7 +1773,14 @@ Refresh = function()
 
     -- Range indicator — requires a real action bar slot; hide if none found
     if db.showOutOfRange and rslot and s1.rangeOverlay then
-        local inRange = C_ActionBar.IsActionInRange(rslot)
+        local okR, inRange = pcall(C_ActionBar.IsActionInRange, rslot)
+        if not okR then
+            if rslot ~= lastRangeFailSlot then
+                DLog("SLOT", string.format("IsActionInRange pcall failed for slot %d", rslot))
+                lastRangeFailSlot = rslot
+            end
+            inRange = nil
+        end
         -- inRange: true = in range, false = out of range, nil = no range requirement
         s1.rangeOverlay:SetShown(inRange == false)
     elseif s1.rangeOverlay then
