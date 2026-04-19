@@ -25,6 +25,7 @@ local lastLogSuggID   = nil
 local lastSlotSpellID   = {}  -- [slotIndex] = last spellID logged for that slot (change-detect)
 local lastSkippedAlertID = nil  -- last currentAlertSpellID logged as SKIPPED (change-detect)
 local lastRangeFailSlot  = nil  -- last rslot that failed IsActionInRange pcall (change-detect)
+local lastOverrideLogID  = {}   -- [baseSpellID] = effectiveID last logged as OVERRIDE for secondary slots
 
 -- Session event recorder — logs significant state changes (not every tick) to
 -- HekiLightDB.sessionLog so they survive until the next /reload.
@@ -1422,8 +1423,9 @@ local function GetSuggestionQueue(n)
                     -- Dedup against primaryID using the effective (cast) ID, not the base ID.
                     -- GetRotationSpells returns base IDs; primaryID is an override ID.
                     if effectiveID ~= primaryID and not IsSpellOnCooldown(sid) then
-                        if effectiveID ~= sid then
+                        if effectiveID ~= sid and lastOverrideLogID[sid] ~= effectiveID then
                             DLog("OVERRIDE", string.format("secondary spellID %d → %d via slot %d", sid, effectiveID, rslot))
+                            lastOverrideLogID[sid] = effectiveID
                         end
                         queueCount = queueCount + 1
                         queueCache[queueCount].spellID        = sid
@@ -1633,6 +1635,7 @@ Refresh = function()
         currentSuggestionID = nil
         lastLogSuggID = nil
         lastSkippedAlertID = nil
+        wipe(lastOverrideLogID)
         StopGlowPulse()
         StopAlertGlowPulse()
         currentAlertSpellID = nil
