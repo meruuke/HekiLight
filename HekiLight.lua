@@ -560,7 +560,7 @@ local function UpdateMinimapPos()
 end
 
 local function BuildMinimapButton()
-    minimapBtn = CreateFrame("Button", "HekiLightMinimapButton", Minimap)
+    minimapBtn = CreateFrame("Button", "HekiLightMinimapButton", UIParent)
     minimapBtn:SetSize(32, 32)
     minimapBtn:SetFrameStrata("MEDIUM")
     minimapBtn:SetFrameLevel(8)
@@ -1677,7 +1677,11 @@ Refresh = function()
                 slot.iconTexture:SetDesaturated(i > 1 and entry.onCooldown)
                 slot.frame:Show()
                 if db.showKeybind and slot.keybindText then
-                    slot.keybindText:SetText(GetSpellKeybind(entry.spellID))
+                    -- Prefer realSlotID for lookup: avoids FindSpellActionButtons(overrideID)
+                    -- failing for talent-replaced spells (e.g. Defile replacing Death and Decay).
+                    local kb = entry.realSlotID and GetSlotKeybind(entry.realSlotID)
+                               or GetSpellKeybind(entry.spellID)
+                    slot.keybindText:SetText(kb)
                     slot.keybindText:Show()
                 elseif slot.keybindText then
                     slot.keybindText:Hide()
@@ -1927,6 +1931,8 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
+        StopPollLoop()
+        wipe(recentlyCastSpells)
         Refresh()
         Log("Left combat")
 
@@ -1983,7 +1989,12 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         inCinematic = false; Refresh()
 
     elseif event == "UNIT_FLAGS" or event == "UNIT_HEALTH" then
-        if arg1 == "player" then Refresh() end
+        -- These fire every damage/heal tick — only re-render when visibility would change
+        -- (dead state, vehicle state). Full Refresh on every tick is a perf hazard.
+        if arg1 == "player" then
+            local canShow = ShouldShow()
+            if canShow ~= display:IsShown() then Refresh() end
+        end
 
     elseif event == "UNIT_ENTERED_VEHICLE" then
         if arg1 == "player" then Refresh() end
