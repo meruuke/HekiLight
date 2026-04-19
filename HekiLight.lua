@@ -26,6 +26,7 @@ local lastSlotSpellID   = {}  -- [slotIndex] = last spellID logged for that slot
 local lastSkippedAlertID = nil  -- last currentAlertSpellID logged as SKIPPED (change-detect)
 local lastRangeFailSlot  = nil  -- last rslot that failed IsActionInRange pcall (change-detect)
 local lastOverrideLogID  = {}   -- [baseSpellID] = effectiveID last logged as OVERRIDE for secondary slots
+local lastRawSuggID      = nil  -- last spellID logged as RAW_SUGG (change-detect)
 
 -- Session event recorder — logs significant state changes (not every tick) to
 -- HekiLightDB.sessionLog so they survive until the next /reload.
@@ -1277,10 +1278,11 @@ local function GetActiveSuggestion()
         ok, spellID = pcall(C_AssistedCombat.GetNextCastSpell, false)
         if not ok then spellID = nil end
         Log("GetNextCastSpell →", tostring(spellID))
-        if spellID then
+        if spellID and spellID ~= lastRawSuggID then
             local si = C_Spell.GetSpellInfo(spellID)
             DLog("RAW_SUGG", string.format("GetNextCastSpell=%d name=%s iconID=%s",
                 spellID, si and si.name or "?", tostring(si and si.iconID)))
+            lastRawSuggID = spellID
         end
     end
 
@@ -1308,10 +1310,11 @@ local function GetActiveSuggestion()
             end)
             if not ok then spellID = nil end
             Log("Fallback Rotation Assistant slot", tostring(sbaSlot), "→ spellID", tostring(spellID))
-            if spellID then
+            if spellID and spellID ~= lastRawSuggID then
                 local si = C_Spell.GetSpellInfo(spellID)
                 DLog("RAW_SUGG", string.format("Fallback slot=%d spellID=%d name=%s iconID=%s",
                     sbaSlot, spellID, si and si.name or "?", tostring(si and si.iconID)))
+                lastRawSuggID = spellID
             end
         end
     end
@@ -1634,6 +1637,7 @@ Refresh = function()
         end
         currentSuggestionID = nil
         lastLogSuggID = nil
+        lastRawSuggID = nil
         lastSkippedAlertID = nil
         wipe(lastOverrideLogID)
         StopGlowPulse()
@@ -1970,6 +1974,7 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
 
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
+        lastRawSuggID = nil
         StopPollLoop()
         wipe(recentlyCastSpells)
         Refresh()
