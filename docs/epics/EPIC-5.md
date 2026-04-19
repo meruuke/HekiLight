@@ -1,6 +1,6 @@
 # EPIC-5: Correctness Hardening
 
-**Status:** Ready
+**Status:** Done
 **Version range:** v0.4.0 → current
 **Depends on:** EPIC-4 (Done)
 
@@ -16,9 +16,9 @@ These bugs are most visible to talent-heavy specs (Blood DK with Defile, any spe
 
 | ID | Title | Status |
 |----|-------|--------|
-| 5.1 | Override-aware secondary slot deduplication | Ready |
-| 5.2 | `IsActionInRange` pcall guard | Ready |
-| 5.3 | `GetRealSlot` for secondary spells | Ready |
+| 5.1 | Override-aware secondary slot deduplication | Done |
+| 5.2 | `IsActionInRange` pcall guard | Done |
+| 5.3 | `GetRealSlot` for secondary spells | Done |
 
 ## Key Technical Context
 
