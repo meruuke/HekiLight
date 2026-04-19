@@ -22,7 +22,8 @@ end
 -- InitDB() re-points sessionLog at HekiLightDB.sessionLog after ADDON_LOADED).
 local sessionLog      = {}
 local lastLogSuggID   = nil
-local lastSlotSpellID = {}  -- [slotIndex] = last spellID logged for that slot (change-detect)
+local lastSlotSpellID   = {}  -- [slotIndex] = last spellID logged for that slot (change-detect)
+local lastSkippedAlertID = nil  -- last currentAlertSpellID logged as SKIPPED (change-detect)
 
 -- Session event recorder — logs significant state changes (not every tick) to
 -- HekiLightDB.sessionLog so they survive until the next /reload.
@@ -1330,6 +1331,20 @@ local function GetActiveSuggestion()
             end
         end
     end
+
+    -- RA returns the base spellID even when a talent replaces it (e.g. Death and Decay → Defile).
+    -- GetActionInfo on the real bar slot returns the overriding spell, giving us the correct icon.
+    if realSlotID then
+        local ok, overrideID = pcall(function()
+            local t, id = GetActionInfo(realSlotID)
+            return (t == "spell") and id or nil
+        end)
+        if ok and overrideID and overrideID ~= spellID then
+            DLog("OVERRIDE", string.format("spellID %d → %d via slot %d", spellID, overrideID, realSlotID))
+            spellID = overrideID
+        end
+    end
+
     Log("Active suggestion: spellID=", spellID, "realSlot=", tostring(realSlotID))
     return spellID, realSlotID
 end
@@ -1567,6 +1582,7 @@ local function UpdateProcAlert(primarySpellID)
     end
     if procAlertFrame:IsShown() then
         DLog("ALERT_HIDE", "no overlayed candidate found")
+        lastSkippedAlertID = nil
     end
     if procAlertFrame.keybindText then procAlertFrame.keybindText:Hide() end
     StopAlertGlowPulse()
@@ -1586,6 +1602,7 @@ Refresh = function()
         end
         currentSuggestionID = nil
         lastLogSuggID = nil
+        lastSkippedAlertID = nil
         StopGlowPulse()
         StopAlertGlowPulse()
         currentAlertSpellID = nil
@@ -1637,9 +1654,12 @@ Refresh = function()
             -- Advance past any entry already shown in the proc-alert slot
             while nextQueueIdx <= queueCount and
                   queue[nextQueueIdx].spellID == currentAlertSpellID do
-                local si2 = C_Spell.GetSpellInfo(queue[nextQueueIdx].spellID)
-                DLog("SLOT", string.format("queue[%d] SKIPPED (alert has it) spellID=%d (%s)",
-                    nextQueueIdx, queue[nextQueueIdx].spellID, si2 and si2.name or "?"))
+                if lastSkippedAlertID ~= currentAlertSpellID then
+                    local si2 = C_Spell.GetSpellInfo(queue[nextQueueIdx].spellID)
+                    DLog("SLOT", string.format("queue[%d] SKIPPED (alert has it) spellID=%d (%s)",
+                        nextQueueIdx, queue[nextQueueIdx].spellID, si2 and si2.name or "?"))
+                    lastSkippedAlertID = currentAlertSpellID
+                end
                 nextQueueIdx = nextQueueIdx + 1
             end
             entry = (nextQueueIdx <= queueCount) and queue[nextQueueIdx] or nil
