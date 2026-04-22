@@ -4,3 +4,26 @@ docs/stories/*.md linguist-generated=true
 docs/epics/*.md   linguist-generated=true
 docs/prd/*.md     linguist-generated=true
 ADR.md            linguist-generated=true
+
+# Exclude non-addon files from git archive (GitHub release ZIPs).
+# Players only need HekiLight.lua, HekiLight.toc, and Locale.lua.
+docs/            export-ignore
+ADR.md           export-ignore
+CHANGELOG.md     export-ignore
+LICENSE          export-ignore
+README.md        export-ignore
+CLAUDE.md        export-ignore
+assets/          export-ignore
+squads/          export-ignore
+.aiox-core/      export-ignore
+.claude/         export-ignore
+.antigravity/    export-ignore
+.codex/          export-ignore
+.cursor/         export-ignore
+.gemini/         export-ignore
+.github/         export-ignore
+.vscode/         export-ignore
+.gitattributes   export-ignore
+.gitignore       export-ignore
+.pkgmeta         export-ignore
+.env.example     export-ignore
