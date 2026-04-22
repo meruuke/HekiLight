@@ -3,6 +3,7 @@ package-as: HekiLight
 ignore:
   - .git
   - .github
+  - .gitattributes
   - .gitignore
   - .pkgmeta
   - .env
@@ -15,6 +16,8 @@ ignore:
   - .gemini
   - .vscode
   - assets
+  - docs
   - squads
-  - README.md
+  - ADR.md
   - CLAUDE.md
+  - README.md
