@@ -1678,11 +1678,13 @@ local function UpdateProcAlert(primarySpellID)
     end
 
     -- Pick the first candidate that is currently overlayed, is not the primary suggestion,
-    -- has a keybind (proxy for "on the action bar"), and is off cooldown.
+    -- has a keybind (proxy for "on the action bar"), and is not on a real cooldown.
+    -- Uses IsSpellOnCooldown (tracks spells with base CD > 1500ms) rather than
+    -- IsSpellAvailable so GCD-only proc spells are never incorrectly blocked.
     local alertSpellID
     for spellID in pairs(candidates) do
         if spellID ~= primarySpellID and C_SpellActivationOverlay.IsSpellOverlayed(spellID) then
-            if GetSpellKeybind(spellID) ~= "" and IsSpellAvailable(spellID) then
+            if GetSpellKeybind(spellID) ~= "" and not IsSpellOnCooldown(spellID) then
                 alertSpellID = spellID
                 break
             end
@@ -2123,7 +2125,9 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         if arg1 == currentSuggestionID and db.showProcGlow then
             StartGlowPulse()
         end
-        UpdateProcAlert(currentSuggestionID)
+        if inCombat or db.showMode == "always" then
+            UpdateProcAlert(currentSuggestionID)
+        end
 
     elseif event == "SPELL_ACTIVATION_OVERLAY_GLOW_HIDE" then
         -- Proc overlay faded; remove from tracking and refresh proc-alert icon
@@ -2133,7 +2137,9 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         if arg1 == currentSuggestionID then
             StopGlowPulse()
         end
-        UpdateProcAlert(currentSuggestionID)
+        if inCombat or db.showMode == "always" then
+            UpdateProcAlert(currentSuggestionID)
+        end
 
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         -- arg1 = unit, arg2 = castGUID, arg3 = spellID
