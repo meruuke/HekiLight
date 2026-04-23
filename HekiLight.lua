@@ -1678,11 +1678,11 @@ local function UpdateProcAlert(primarySpellID)
     end
 
     -- Pick the first candidate that is currently overlayed, is not the primary suggestion,
-    -- and has a keybind (proxy for "actually on the action bar and actionable").
+    -- has a keybind (proxy for "on the action bar"), and is off cooldown.
     local alertSpellID
     for spellID in pairs(candidates) do
         if spellID ~= primarySpellID and C_SpellActivationOverlay.IsSpellOverlayed(spellID) then
-            if GetSpellKeybind(spellID) ~= "" then
+            if GetSpellKeybind(spellID) ~= "" and IsSpellAvailable(spellID) then
                 alertSpellID = spellID
                 break
             end
