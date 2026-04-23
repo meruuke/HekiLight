@@ -1677,12 +1677,15 @@ local function UpdateProcAlert(primarySpellID)
         for _, sid in ipairs(rotList) do candidates[sid] = true end
     end
 
-    -- Pick the first candidate that is currently overlayed and is not the primary suggestion
+    -- Pick the first candidate that is currently overlayed, is not the primary suggestion,
+    -- and has a keybind (proxy for "actually on the action bar and actionable").
     local alertSpellID
     for spellID in pairs(candidates) do
         if spellID ~= primarySpellID and C_SpellActivationOverlay.IsSpellOverlayed(spellID) then
-            alertSpellID = spellID
-            break
+            if GetSpellKeybind(spellID) ~= "" then
+                alertSpellID = spellID
+                break
+            end
         end
     end
 
