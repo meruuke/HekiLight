@@ -577,6 +577,7 @@ end
 
 local minimapBtn
 local settingsCategory
+local libDBIconRef  -- set when LibDBIcon registration succeeds; nil means manual button is active
 
 local function UpdateMinimapPos()
     local angle = math.rad(db.minimapAngle or 225)
@@ -586,7 +587,51 @@ local function UpdateMinimapPos()
         r * math.sin(angle))
 end
 
+local function SetMinimapShown(shown)
+    db.minimapShow = shown
+    if libDBIconRef then
+        if shown then libDBIconRef:Show("HekiLight") else libDBIconRef:Hide("HekiLight") end
+        if db.minimapDB then db.minimapDB.hide = not shown end
+    elseif minimapBtn then
+        minimapBtn:SetShown(shown)
+    end
+end
+
 local function BuildMinimapButton()
+    -- Prefer LibDBIcon when available (loaded by Details, LeatrixPlus, etc.).
+    -- This makes LeatrixPlus treat us as a first-class button: grouped in the
+    -- bag with no "use LibDBIcon" warning tooltip.
+    local ldb     = LibStub and LibStub("LibDataBroker-1.1", true)
+    local libIcon = LibStub and LibStub("LibDBIcon-1.0", true)
+    if ldb and libIcon then
+        local ok, dataObj = pcall(function()
+            return ldb:NewDataObject("HekiLight", {
+                type  = "launcher",
+                icon  = "Interface\\AddOns\\HekiLight\\assets\\icon",
+                OnClick = function(_, btn)
+                    if btn == "LeftButton" and settingsCategory then
+                        Settings.OpenToCategory(settingsCategory:GetID())
+                    end
+                end,
+                OnTooltipShow = function(tip)
+                    tip:AddLine("|cff88ccffHekiLight|r")
+                    tip:AddLine(L["Click to open settings"], 1, 1, 1)
+                    tip:AddLine(L["Drag to reposition"], 0.7, 0.7, 0.7)
+                end,
+            })
+        end)
+        if ok and dataObj then
+            -- db.minimapDB persists LibDBIcon's angle + hide state across sessions.
+            -- Seed minimapPos from db.minimapAngle on first use.
+            db.minimapDB = db.minimapDB or {minimapPos = db.minimapAngle or 225, hide = false}
+            db.minimapDB.hide = not (db.minimapShow ~= false)
+            pcall(libIcon.Register, libIcon, "HekiLight", dataObj, db.minimapDB)
+            libDBIconRef = libIcon
+            return  -- LibDBIcon manages its own frame; no manual button needed
+        end
+    end
+
+    -- Fallback: manual button (used when no LibDBIcon-embedding addon is loaded).
     minimapBtn = CreateFrame("Button", "HekiLightMinimapButton", Minimap)
     minimapBtn:SetSize(32, 32)
     minimapBtn:SetFrameStrata("MEDIUM")
@@ -601,7 +646,7 @@ local function BuildMinimapButton()
     local icon = minimapBtn:CreateTexture(nil, "ARTWORK")
     icon:SetSize(18, 18)
     icon:SetPoint("CENTER")
-    icon:SetTexture("Interface\\Icons\\ability_whirlwind")
+    icon:SetTexture("Interface\\AddOns\\HekiLight\\assets\\icon")
     icon:SetTexCoord(0.05, 0.95, 0.05, 0.95)  -- 5% crop on each side (LibDBIcon standard)
 
     -- Overlay ring anchored at TOPLEFT — the circular ring masks the icon's square corners
@@ -908,7 +953,7 @@ local function BuildSettingsPanel()
     CB(dispBody, cur, L["Show minimap button"],
         L["Show the HekiLight button on the minimap. Drag it to reposition."],
         function() return db.minimapShow ~= false end,
-        function(v) db.minimapShow = v; if minimapBtn then minimapBtn:SetShown(v) end end)
+        function(v) SetMinimapShown(v) end)
     dispBody:SetHeight(math.abs(cur.y) + 8)
 
     -- ── Section: Keybind Style ───────────────────────────────────────────────
@@ -2359,13 +2404,11 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         end
 
     elseif msg == "minimap on" then
-        db.minimapShow = true
-        if minimapBtn then minimapBtn:Show() end
+        SetMinimapShown(true)
         print("|cff88ccffHekiLight:|r " .. L["Minimap button shown."])
 
     elseif msg == "minimap off" then
-        db.minimapShow = false
-        if minimapBtn then minimapBtn:Hide() end
+        SetMinimapShown(false)
         print("|cff88ccffHekiLight:|r " .. L["Minimap button hidden."])
 
     elseif msg == "procalert lock" then
