@@ -106,6 +106,10 @@ Returns `spellID, realSlotID`:
 | `kbanchor bottomright\|bottomleft\|topright\|topleft\|center` | Keybind corner |
 | `ignore <spellID>` / `unignore <spellID>` | Per-character secondary-list filter |
 | `ignorelist` | Print currently ignored spells |
+| `kb slots <spellID>` | List all non-RA bar slots and keybinds for a spell |
+| `kb pin <spellID> <slot>` | Pin a bar slot as the keybind source for a spell |
+| `kb clear <spellID>` | Remove a keybind slot override |
+| `kb list` | Print all current keybind overrides |
 | `edit` | Toggle Edit Mode (drag to reposition both frames) |
 | `status` | Print detection mode, current suggestion, display state |
 | `debug` | Toggle verbose `Log()` output to chat |
