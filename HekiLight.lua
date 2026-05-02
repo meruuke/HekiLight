@@ -1315,7 +1315,7 @@ local function BuildSettingsPanel()
 
         if not overrideListSepLabel then
             overrideListSepLabel = ignoreBody:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            overrideListSepLabel:SetText("|cffaaaaaa── " .. L["Keybind Overrides"] .. " ──|r")
+            overrideListSepLabel:SetText("|cffaaaaaa-- " .. L["Keybind Overrides"] .. " --|r")
         end
         overrideListSepLabel:ClearAllPoints()
         overrideListSepLabel:SetPoint("TOPLEFT", 10, sepY)
