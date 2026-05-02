@@ -155,6 +155,7 @@ local function InitDB()
     dbChar = HekiLightDBChar
     if dbChar.ignoredSpells == nil then dbChar.ignoredSpells = {} end
     if dbChar.classDefaultsApplied == nil then dbChar.classDefaultsApplied = false end
+    if dbChar.keybindOverrides == nil then dbChar.keybindOverrides = {} end
     -- Preserve previous session's log so it survives the /reload used to flush to disk.
     -- lastSessionLog = what was recorded before this reload; sessionLog = current session.
     HekiLightDB.lastSessionLog = HekiLightDB.sessionLog or {}
@@ -262,6 +263,24 @@ end
 --- the spellID from GetActiveSuggestion(), we no longer need to extract it
 --- from the Rotation Assistant slot first, and the texture-fallback scan is gone.
 local function GetSpellKeybind(spellID)
+    local overrideSlot = dbChar.keybindOverrides and dbChar.keybindOverrides[spellID]
+    if overrideSlot then
+        local key = GetSlotKeybind(overrideSlot)
+        if key ~= "" then
+            keybindCache[spellID] = key
+            local logEntry = key .. ":override:" .. overrideSlot
+            if lastKeybindLog[spellID] ~= logEntry then
+                lastKeybindLog[spellID] = logEntry
+                DLog("KEYBIND", string.format("spellID=%d key=%s source=override slot=%d", spellID, key, overrideSlot))
+            end
+            return key
+        end
+        local logEntry = ":override_miss:" .. overrideSlot
+        if lastKeybindLog[spellID] ~= logEntry then
+            lastKeybindLog[spellID] = logEntry
+            DLog("KEYBIND", string.format("spellID=%d source=override_miss slot=%d", spellID, overrideSlot))
+        end
+    end
     local actionSlots = C_ActionBar.FindSpellActionButtons(spellID)
     if actionSlots then
         for _, slot in ipairs(actionSlots) do
@@ -2479,6 +2498,81 @@ SlashCmdList["HEKILIGHT"] = function(msg)
                 local name = si and si.name or "(unknown)"
                 print("  " .. name .. " [" .. sid .. "]  — /hkl unignore " .. sid .. " " .. L["to restore"])
             end
+        end
+
+    elseif msg == "kb" or msg:find("^kb%s") then
+        local sub, rest = msg:match("^kb%s+(%S+)%s*(.*)")
+        rest = rest and strtrim(rest) or ""
+
+        if sub == "slots" then
+            local sid = tonumber(rest)
+            if not sid then
+                print("|cff88ccffHekiLight:|r Usage: /hkl kb slots <spellID>")
+            else
+                local ok, slots = pcall(C_ActionBar.FindSpellActionButtons, sid)
+                local si = C_Spell.GetSpellInfo(sid)
+                local name = si and si.name or tostring(sid)
+                if ok and slots and #slots > 0 then
+                    print("|cff88ccffHekiLight:|r Keybinds for spellID " .. sid .. " (" .. name .. "):")
+                    local found = false
+                    for _, slot in ipairs(slots) do
+                        if not C_ActionBar.IsAssistedCombatAction(slot) then
+                            local key = GetSlotKeybind(slot)
+                            print("  Slot " .. slot .. "  → " .. (key ~= "" and key or "(unbound)"))
+                            found = true
+                        end
+                    end
+                    if not found then
+                        print("|cff88ccffHekiLight:|r No action bar slots found for spellID " .. sid)
+                    end
+                else
+                    print("|cff88ccffHekiLight:|r No action bar slots found for spellID " .. sid)
+                end
+            end
+
+        elseif sub == "pin" then
+            local sidStr, slotStr = rest:match("^(%d+)%s+(%d+)$")
+            local sid = tonumber(sidStr)
+            local slot = tonumber(slotStr)
+            if not sid or not slot or sid <= 0 or slot <= 0 then
+                print("|cff88ccffHekiLight:|r Usage: /hkl kb pin <spellID> <slot>")
+            else
+                dbChar.keybindOverrides[sid] = slot
+                local si = C_Spell.GetSpellInfo(sid)
+                local name = si and si.name or tostring(sid)
+                local key = GetSlotKeybind(slot)
+                print("|cff88ccffHekiLight:|r Keybind pinned: " .. name .. " [" .. sid .. "] → Slot " .. slot .. " (" .. (key ~= "" and key or "unbound") .. ")")
+            end
+
+        elseif sub == "clear" then
+            local sid = tonumber(rest)
+            if not sid then
+                print("|cff88ccffHekiLight:|r Usage: /hkl kb clear <spellID>")
+            else
+                dbChar.keybindOverrides[sid] = nil
+                local si = C_Spell.GetSpellInfo(sid)
+                local name = si and si.name or tostring(sid)
+                print("|cff88ccffHekiLight:|r Keybind override cleared for " .. name .. " [" .. sid .. "]")
+            end
+
+        elseif sub == "list" then
+            local sorted = {}
+            for sid in pairs(dbChar.keybindOverrides) do sorted[#sorted + 1] = sid end
+            table.sort(sorted)
+            if #sorted == 0 then
+                print("|cff88ccffHekiLight:|r No keybind overrides set.")
+            else
+                print("|cff88ccffHekiLight:|r Keybind overrides:")
+                for _, sid in ipairs(sorted) do
+                    local slot = dbChar.keybindOverrides[sid]
+                    local si = C_Spell.GetSpellInfo(sid)
+                    local name = si and si.name or tostring(sid)
+                    print("  " .. name .. " [" .. sid .. "] → Slot " .. slot)
+                end
+            end
+
+        else
+            print("|cff88ccffHekiLight:|r Usage: /hkl kb slots <spellID> | pin <spellID> <slot> | clear <spellID> | list")
         end
 
     elseif msg == "debug" then
