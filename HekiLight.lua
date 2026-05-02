@@ -1122,6 +1122,7 @@ local function BuildSettingsPanel()
         pinBtn:Hide()
         slotHintLabel:Hide()
         RefreshIgnoreList()
+        RefreshOverrideList()
     end)
 
     -- ── Slot-picker row (row 2, hidden until spell with ≥2 non-RA slots selected) ─
@@ -1242,6 +1243,7 @@ local function BuildSettingsPanel()
                         slotHintLabel:Show()
                     end
                     RefreshIgnoreList()
+                    RefreshOverrideList()
                 end
             end
             UIDropDownMenu_AddButton(info, level)
