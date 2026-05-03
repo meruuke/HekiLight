@@ -1080,17 +1080,8 @@ local function BuildSettingsPanel()
     ignoreDesc:SetText(L["Spells hidden from the secondary suggestion list. Select a spell and click Add.\n|cffaaaaaa Requires Rotation Assistant to be active.|r"])
 
     local selectedIgnoreSpellID = nil
-    local selectedSlotID = nil
     local rowPool = {}
-    local ignoreEmptyLabel = nil
-    local overrideRowPool = {}
-    local overrideEmptyLabel = nil
-    local overrideListSepLabel = nil
     local RefreshIgnoreList      -- forward declaration
-    local RefreshOverrideList    -- forward declaration
-    local slotDD                 -- assigned after addBtn row
-    local pinBtn                 -- assigned after addBtn row
-    local slotHintLabel          -- assigned after addBtn row
 
     -- UIDropDownMenu has ~18 px inherent left padding; offset by -2 to align
     local ignoreDD = CreateFrame("Frame", "HekiLightIgnoreDropdown", ignoreBody, "UIDropDownMenuTemplate")
@@ -1116,70 +1107,11 @@ local function BuildSettingsPanel()
         local name = si and si.name or tostring(selectedIgnoreSpellID)
         print("|cff88ccffHekiLight:|r " .. name .. " [" .. selectedIgnoreSpellID .. "]" .. L[" will no longer appear in the secondary list."])
         selectedIgnoreSpellID = nil
-        selectedSlotID = nil
         UIDropDownMenu_SetText(ignoreDD, L["Select a rotation spell..."])
-        slotDD:Hide()
-        pinBtn:Hide()
-        slotHintLabel:Hide()
         RefreshIgnoreList()
-        RefreshOverrideList()
     end)
 
-    -- ── Slot-picker row (row 2, hidden until spell with ≥2 non-RA slots selected) ─
-    slotDD = CreateFrame("Frame", "HekiLightSlotDropdown", ignoreBody, "UIDropDownMenuTemplate")
-    slotDD:SetPoint("TOPLEFT", -2, -70)
-    UIDropDownMenu_SetWidth(slotDD, 240)
-    UIDropDownMenu_SetText(slotDD, L["Select a bar slot..."])
-    slotDD:Hide()
-
-    UIDropDownMenu_Initialize(slotDD, function(self, level)
-        if not selectedIgnoreSpellID then return end
-        local ok, slots = pcall(C_ActionBar.FindSpellActionButtons, selectedIgnoreSpellID)
-        if ok and slots then
-            for _, slot in ipairs(slots) do
-                if not C_ActionBar.IsAssistedCombatAction(slot) then
-                    local info = UIDropDownMenu_CreateInfo()
-                    local key = GetSlotKeybind(slot)
-                    info.text = "Slot " .. slot .. " → " .. (key ~= "" and key or "(unbound)")
-                        .. (dbChar.keybindOverrides[selectedIgnoreSpellID] == slot and " [pinned]" or "")
-                    info.func = function() selectedSlotID = slot end
-                    UIDropDownMenu_AddButton(info, level)
-                end
-            end
-        end
-    end)
-
-    pinBtn = CreateFrame("Button", nil, ignoreBody, "UIPanelButtonTemplate")
-    pinBtn:SetPoint("LEFT", slotDD, "RIGHT", -4, 2)
-    pinBtn:SetSize(130, 22)
-    pinBtn:SetText(L["Pin keybind"])
-    pinBtn:Hide()
-    pinBtn:SetScript("OnClick", function()
-        if not selectedIgnoreSpellID or not selectedSlotID then
-            print("|cff88ccffHekiLight:|r " .. L["Select a spell and a slot first."])
-            return
-        end
-        dbChar.keybindOverrides[selectedIgnoreSpellID] = selectedSlotID
-        local si = C_Spell.GetSpellInfo(selectedIgnoreSpellID)
-        local name = si and si.name or tostring(selectedIgnoreSpellID)
-        local key = GetSlotKeybind(selectedSlotID)
-        print("|cff88ccffHekiLight:|r Keybind pinned: " .. name .. " [" .. selectedIgnoreSpellID .. "] → Slot " .. selectedSlotID .. " (" .. (key ~= "" and key or "unbound") .. ")")
-        selectedIgnoreSpellID = nil
-        selectedSlotID = nil
-        UIDropDownMenu_SetText(ignoreDD, L["Select a rotation spell..."])
-        slotDD:Hide()
-        pinBtn:Hide()
-        slotHintLabel:Hide()
-        RefreshIgnoreList()
-        RefreshOverrideList()
-    end)
-
-    slotHintLabel = ignoreBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    slotHintLabel:SetPoint("TOPLEFT", 8, -74)
-    slotHintLabel:SetText(L["Only one bar slot found — no override needed."])
-    slotHintLabel:Hide()
-
-    local ignoreListBaseY = -82  -- below the dropdown row
+    local ignoreListBaseY = -72  -- below the dropdown row
 
     -- Dropdown initializer: data fetched live on every open (never stale)
     UIDropDownMenu_Initialize(ignoreDD, function(self, level)
@@ -1222,38 +1154,18 @@ local function BuildSettingsPanel()
                 info.func = function()
                     selectedIgnoreSpellID = capturedSid
                     UIDropDownMenu_SetText(ignoreDD, capturedName .. " [" .. capturedSid .. "]")
-                    selectedSlotID = nil
-                    local ok2, slots2 = pcall(C_ActionBar.FindSpellActionButtons, capturedSid)
-                    local nonRACount = 0
-                    if ok2 and slots2 then
-                        for _, s in ipairs(slots2) do
-                            if not C_ActionBar.IsAssistedCombatAction(s) then
-                                nonRACount = nonRACount + 1
-                            end
-                        end
-                    end
-                    if nonRACount >= 2 then
-                        UIDropDownMenu_SetText(slotDD, L["Select a bar slot..."])
-                        slotDD:Show()
-                        pinBtn:Show()
-                        slotHintLabel:Hide()
-                    else
-                        slotDD:Hide()
-                        pinBtn:Hide()
-                        slotHintLabel:Show()
-                    end
-                    RefreshIgnoreList()
-                    RefreshOverrideList()
                 end
             end
             UIDropDownMenu_AddButton(info, level)
         end
     end)
 
+    local ignoreEmptyLabel = ignoreBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    ignoreEmptyLabel:SetPoint("TOPLEFT", 10, ignoreListBaseY)
+    ignoreEmptyLabel:SetText(L["No spells are currently ignored."])
+
     RefreshIgnoreList = function()
         for _, row in ipairs(rowPool) do row:Hide() end
-        local slotShift = (slotDD and slotDD:IsShown()) and 30 or 0
-        local effectiveBaseY = ignoreListBaseY - slotShift
         local sorted = {}
         for sid in pairs(dbChar.ignoredSpells) do sorted[#sorted + 1] = sid end
         table.sort(sorted)
@@ -1284,99 +1196,13 @@ local function BuildSettingsPanel()
             row.removeBtn:SetScript("OnClick", function()
                 dbChar.ignoredSpells[capturedSid] = nil
                 RefreshIgnoreList()
-                RefreshOverrideList()
             end)
-            row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", 10, effectiveBaseY - (rowIdx - 1) * 30)
+            row:SetPoint("TOPLEFT", 10, ignoreListBaseY - (rowIdx - 1) * 30)
             row:Show()
         end
-        if not ignoreEmptyLabel then
-            ignoreEmptyLabel = ignoreBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-            ignoreEmptyLabel:SetText(L["No spells are currently ignored."])
-        end
-        ignoreEmptyLabel:ClearAllPoints()
-        ignoreEmptyLabel:SetPoint("TOPLEFT", 10, effectiveBaseY)
         ignoreEmptyLabel:SetShown(rowIdx == 0)
-        local overrideCount = 0
-        for _ in pairs(dbChar.keybindOverrides) do overrideCount = overrideCount + 1 end
-        ignoreBody:SetHeight(math.abs(ignoreListBaseY) + slotShift + (math.max(rowIdx, 1) + math.max(overrideCount, 1) + 1) * 30 + 20)
+        ignoreBody:SetHeight(math.abs(ignoreListBaseY) + math.max(rowIdx * 30, 20) + 16)
         LayoutSections()
-    end
-
-    RefreshOverrideList = function()
-        for _, row in ipairs(overrideRowPool) do row:Hide() end
-        if overrideListSepLabel then overrideListSepLabel:Hide() end
-        if overrideEmptyLabel then overrideEmptyLabel:Hide() end
-
-        local slotShift = (slotDD and slotDD:IsShown()) and 30 or 0
-        local ignoreCount = 0
-        for _ in pairs(dbChar.ignoredSpells) do ignoreCount = ignoreCount + 1 end
-        local sepY = ignoreListBaseY - slotShift - math.max(ignoreCount, 1) * 30 - 10
-
-        if not overrideListSepLabel then
-            overrideListSepLabel = ignoreBody:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-            overrideListSepLabel:SetText("|cffaaaaaa-- " .. L["Keybind Overrides"] .. " --|r")
-        end
-        overrideListSepLabel:ClearAllPoints()
-        overrideListSepLabel:SetPoint("TOPLEFT", 10, sepY)
-        overrideListSepLabel:Show()
-
-        local sorted = {}
-        for sid in pairs(dbChar.keybindOverrides) do sorted[#sorted + 1] = sid end
-        table.sort(sorted)
-        local rowIdx = 0
-        for _, sid in ipairs(sorted) do
-            rowIdx = rowIdx + 1
-            local row = overrideRowPool[rowIdx]
-            if not row then
-                row = CreateFrame("Frame", nil, ignoreBody)
-                row:SetSize(570, 24)
-                row.icon = row:CreateTexture(nil, "ARTWORK")
-                row.icon:SetSize(20, 20)
-                row.icon:SetPoint("LEFT", 4, 0)
-                row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-                row.label:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
-                row.label:SetWidth(440)
-                row.label:SetJustifyH("LEFT")
-                row.clearBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
-                row.clearBtn:SetSize(70, 20)
-                row.clearBtn:SetPoint("RIGHT", row, "RIGHT", 0, 0)
-                row.clearBtn:SetText(L["Clear"])
-                overrideRowPool[rowIdx] = row
-            end
-            local capturedSid = sid
-            local slotID = dbChar.keybindOverrides[sid]
-            local si = C_Spell.GetSpellInfo(sid)
-            local key = GetSlotKeybind(slotID)
-            row.icon:SetTexture(si and si.iconID or "Interface\\Icons\\INV_Misc_QuestionMark")
-            row.label:SetText(
-                (si and si.name or "(unknown)") ..
-                "  |cff888888[" .. sid .. "]|r" ..
-                "  Slot " .. slotID ..
-                " → " .. (key ~= "" and key or "(unbound)")
-            )
-            row.clearBtn:SetScript("OnClick", function()
-                dbChar.keybindOverrides[capturedSid] = nil
-                if selectedIgnoreSpellID == capturedSid then
-                    selectedSlotID = nil
-                    slotDD:Hide()
-                    pinBtn:Hide()
-                    slotHintLabel:Hide()
-                end
-                RefreshIgnoreList()
-                RefreshOverrideList()
-            end)
-            row:ClearAllPoints()
-            row:SetPoint("TOPLEFT", 10, sepY - rowIdx * 30)
-            row:Show()
-        end
-        if not overrideEmptyLabel then
-            overrideEmptyLabel = ignoreBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-            overrideEmptyLabel:SetText(L["No keybind overrides set."])
-        end
-        overrideEmptyLabel:ClearAllPoints()
-        overrideEmptyLabel:SetPoint("TOPLEFT", 10, sepY - 30)
-        overrideEmptyLabel:SetShown(rowIdx == 0)
     end
 
     local function CountRotationSpells()
@@ -1408,13 +1234,226 @@ local function BuildSettingsPanel()
         origIgnoreClick(self)
         if ignoreSec.isExpanded then
             RefreshIgnoreList()
-            RefreshOverrideList()
             UpdateDropdownHint()
             if not ignoreSec.ticker then
                 ignoreSec.ticker = C_Timer.NewTicker(0.5, UpdateDropdownHint)
             end
         else
             if ignoreSec.ticker then ignoreSec.ticker:Cancel(); ignoreSec.ticker = nil end
+        end
+    end)
+
+    -- ── Keybind Overrides section ─────────────────────────────────────────────
+    local kbSec, kbBody = MakeSection(L["Keybind Overrides"], false)
+
+    local kbDesc = kbBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    kbDesc:SetPoint("TOPLEFT", 10, -10)
+    kbDesc:SetWidth(570)
+    kbDesc:SetJustifyH("LEFT")
+    kbDesc:SetText(L["Pin the bar slot HekiLight reads for a spell's keybind."])
+
+    local selectedKbSpellID = nil
+    local selectedKbSlotID  = nil
+    local kbRowPool = {}
+    local RefreshKbOverrideList  -- forward declaration
+
+    -- UIDropDownMenu has ~18 px inherent left padding; offset by -2 to align
+    local kbSpellDD = CreateFrame("Frame", "HekiLightKbSpellDropdown", kbBody, "UIDropDownMenuTemplate")
+    kbSpellDD:SetPoint("TOPLEFT", -2, -26)
+    UIDropDownMenu_SetWidth(kbSpellDD, 240)
+    UIDropDownMenu_SetText(kbSpellDD, L["Select a rotation spell..."])
+
+    local kbSlotDD = CreateFrame("Frame", "HekiLightKbSlotDropdown", kbBody, "UIDropDownMenuTemplate")
+    kbSlotDD:SetPoint("TOPLEFT", -2, -56)
+    UIDropDownMenu_SetWidth(kbSlotDD, 240)
+    UIDropDownMenu_SetText(kbSlotDD, L["Select a bar slot..."])
+    kbSlotDD:Hide()
+
+    local kbPinBtn = CreateFrame("Button", nil, kbBody, "UIPanelButtonTemplate")
+    kbPinBtn:SetPoint("LEFT", kbSlotDD, "RIGHT", -4, 2)
+    kbPinBtn:SetSize(130, 22)
+    kbPinBtn:SetText(L["Pin keybind"])
+    kbPinBtn:Hide()
+
+    local kbHintLabel = kbBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    kbHintLabel:SetPoint("TOPLEFT", 8, -60)
+    kbHintLabel:SetText(L["Only one bar slot found — no override needed."])
+    kbHintLabel:Hide()
+
+    local kbListBaseY = -90
+    local kbEmptyLabel = kbBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    kbEmptyLabel:SetPoint("TOPLEFT", 10, kbListBaseY)
+    kbEmptyLabel:SetText(L["No keybind overrides set."])
+
+    UIDropDownMenu_Initialize(kbSlotDD, function(self, level)
+        if not selectedKbSpellID then return end
+        local ok, slots = pcall(C_ActionBar.FindSpellActionButtons, selectedKbSpellID)
+        if ok and slots then
+            for _, slot in ipairs(slots) do
+                if not C_ActionBar.IsAssistedCombatAction(slot) then
+                    local info = UIDropDownMenu_CreateInfo()
+                    local key  = GetSlotKeybind(slot)
+                    info.text  = "Slot " .. slot .. " \226\134\146 " .. (key ~= "" and key or "(unbound)")
+                        .. (dbChar.keybindOverrides[selectedKbSpellID] == slot and " [pinned]" or "")
+                    info.func  = function() selectedKbSlotID = slot end
+                    UIDropDownMenu_AddButton(info, level)
+                end
+            end
+        end
+    end)
+
+    UIDropDownMenu_Initialize(kbSpellDD, function(self, level)
+        local entries = {}
+        local ok, rotSpells = pcall(C_AssistedCombat.GetRotationSpells)
+        if not (ok and type(rotSpells) == "table" and #rotSpells > 0) then
+            rotSpells = cachedRotSpells
+        end
+        for _, sid in ipairs(rotSpells) do
+            if IsPlayerSpell(sid) then
+                local si = C_Spell.GetSpellInfo(sid)
+                if si then
+                    entries[#entries + 1] = {
+                        sid     = sid,
+                        name    = si.name,
+                        iconID  = si.iconID,
+                        ignored = dbChar.ignoredSpells[sid],
+                    }
+                end
+            end
+        end
+        if #entries == 0 then
+            local info    = UIDropDownMenu_CreateInfo()
+            info.text     = "|cff888888" .. L["No rotation spells available"] .. "|r"
+            info.disabled = true
+            UIDropDownMenu_AddButton(info, level)
+            return
+        end
+        for _, entry in ipairs(entries) do
+            local info    = UIDropDownMenu_CreateInfo()
+            info.text     = (entry.ignored and "|cff888888" or "")
+                            .. entry.name
+                            .. "  |cff666666[" .. entry.sid .. "]|r"
+                            .. (entry.ignored and " (ignored)|r" or "")
+            info.icon     = entry.iconID
+            info.disabled = entry.ignored
+            if not entry.ignored then
+                local capturedSid  = entry.sid
+                local capturedName = entry.name
+                info.func = function()
+                    selectedKbSpellID = capturedSid
+                    selectedKbSlotID  = nil
+                    UIDropDownMenu_SetText(kbSpellDD, capturedName .. " [" .. capturedSid .. "]")
+                    local ok2, slots2 = pcall(C_ActionBar.FindSpellActionButtons, capturedSid)
+                    local nonRACount  = 0
+                    if ok2 and slots2 then
+                        for _, s in ipairs(slots2) do
+                            if not C_ActionBar.IsAssistedCombatAction(s) then
+                                nonRACount = nonRACount + 1
+                            end
+                        end
+                    end
+                    if nonRACount >= 2 then
+                        UIDropDownMenu_SetText(kbSlotDD, L["Select a bar slot..."])
+                        kbSlotDD:Show()
+                        kbPinBtn:Show()
+                        kbHintLabel:Hide()
+                    else
+                        kbSlotDD:Hide()
+                        kbPinBtn:Hide()
+                        kbHintLabel:Show()
+                    end
+                    RefreshKbOverrideList()
+                end
+            end
+            UIDropDownMenu_AddButton(info, level)
+        end
+    end)
+
+    kbPinBtn:SetScript("OnClick", function()
+        if not selectedKbSpellID or not selectedKbSlotID then
+            print("|cff88ccffHekiLight:|r " .. L["Select a spell and a slot first."])
+            return
+        end
+        dbChar.keybindOverrides[selectedKbSpellID] = selectedKbSlotID
+        local si  = C_Spell.GetSpellInfo(selectedKbSpellID)
+        local name = si and si.name or tostring(selectedKbSpellID)
+        local key  = GetSlotKeybind(selectedKbSlotID)
+        print("|cff88ccffHekiLight:|r Keybind pinned: " .. name .. " [" .. selectedKbSpellID .. "] \226\134\146 Slot " .. selectedKbSlotID .. " (" .. (key ~= "" and key or "unbound") .. ")")
+        selectedKbSpellID = nil
+        selectedKbSlotID  = nil
+        UIDropDownMenu_SetText(kbSpellDD, L["Select a rotation spell..."])
+        kbSlotDD:Hide()
+        kbPinBtn:Hide()
+        kbHintLabel:Hide()
+        RefreshKbOverrideList()
+    end)
+
+    RefreshKbOverrideList = function()
+        for _, row in ipairs(kbRowPool) do row:Hide() end
+        local slotPickerShift = (kbSlotDD and kbSlotDD:IsShown()) and 30 or 0
+        local sorted = {}
+        for sid in pairs(dbChar.keybindOverrides) do sorted[#sorted + 1] = sid end
+        table.sort(sorted)
+        local rowIdx = 0
+        for _, sid in ipairs(sorted) do
+            rowIdx = rowIdx + 1
+            local row = kbRowPool[rowIdx]
+            if not row then
+                row = CreateFrame("Frame", nil, kbBody)
+                row:SetSize(570, 24)
+                row.icon = row:CreateTexture(nil, "ARTWORK")
+                row.icon:SetSize(20, 20)
+                row.icon:SetPoint("LEFT", 4, 0)
+                row.label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+                row.label:SetPoint("LEFT", row.icon, "RIGHT", 6, 0)
+                row.label:SetWidth(440)
+                row.label:SetJustifyH("LEFT")
+                row.clearBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+                row.clearBtn:SetSize(70, 20)
+                row.clearBtn:SetPoint("RIGHT", row, "RIGHT", 0, 0)
+                row.clearBtn:SetText(L["Clear"])
+                kbRowPool[rowIdx] = row
+            end
+            local capturedSid = sid
+            local slotID = dbChar.keybindOverrides[sid]
+            local si     = C_Spell.GetSpellInfo(sid)
+            local key    = GetSlotKeybind(slotID)
+            row.icon:SetTexture(si and si.iconID or "Interface\\Icons\\INV_Misc_QuestionMark")
+            row.label:SetText(
+                (si and si.name or "(unknown)") ..
+                "  |cff888888[" .. sid .. "]|r" ..
+                "  Slot " .. slotID ..
+                " \226\134\146 " .. (key ~= "" and key or "(unbound)")
+            )
+            row.clearBtn:SetScript("OnClick", function()
+                dbChar.keybindOverrides[capturedSid] = nil
+                if selectedKbSpellID == capturedSid then
+                    selectedKbSpellID = nil
+                    selectedKbSlotID  = nil
+                    UIDropDownMenu_SetText(kbSpellDD, L["Select a rotation spell..."])
+                    kbSlotDD:Hide()
+                    kbPinBtn:Hide()
+                    kbHintLabel:Hide()
+                end
+                RefreshKbOverrideList()
+            end)
+            row:SetPoint("TOPLEFT", 10, kbListBaseY - (rowIdx - 1) * 30)
+            row:Show()
+        end
+        kbEmptyLabel:ClearAllPoints()
+        kbEmptyLabel:SetPoint("TOPLEFT", 10, kbListBaseY)
+        kbEmptyLabel:SetShown(rowIdx == 0)
+        local overrideCount = 0
+        for _ in pairs(dbChar.keybindOverrides) do overrideCount = overrideCount + 1 end
+        kbBody:SetHeight(90 + slotPickerShift + math.max(overrideCount, 1) * 30)
+        LayoutSections()
+    end
+
+    local origKbClick = kbSec.header:GetScript("OnClick")
+    kbSec.header:SetScript("OnClick", function(self)
+        origKbClick(self)
+        if kbSec.isExpanded then
+            RefreshKbOverrideList()
         end
     end)
 

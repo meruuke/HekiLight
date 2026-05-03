@@ -137,7 +137,9 @@ if GetLocale() == "ptBR" then
     L["That spell is already ignored."] = "Esta magia já está ignorada."
     L[" will no longer appear in the secondary list."] = " não aparecerá mais na lista secundária."
     L[" restored to the secondary list."] = " restaurado à lista secundária."
-    -- Keybind override panel (Story 10.2)
+    -- Keybind override panel (Story 10.2 / 10.3)
+    L["Pin the bar slot HekiLight reads for a spell's keybind."]
+        = "Fixe o slot de barra que HekiLight usa para o atalho de uma magia."
     L["Select a bar slot..."]          = "Selecione um slot de barra..."
     L["Pin keybind"]                   = "Fixar atalho"
     L["Only one bar slot found — no override needed."] = "Apenas um slot encontrado — substituição desnecessária."
