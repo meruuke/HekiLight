@@ -220,15 +220,16 @@ Additionally, the RA button shows only the immediate next spell. No planning hor
 | EPIC-2 | Multi-Suggestion Queue | Done (v0.1.0–v0.1.3) |
 | EPIC-3 | Settings, Polish & Customization | Done (v0.1.4–v0.2.1) |
 | EPIC-4 | Diagnostics, Proc Alert & Correctness | Done (v0.3.0–v0.3.2) |
-| EPIC-5 | Correctness Hardening | Planned |
+| EPIC-5 | Correctness Hardening | Done (v0.4.0) |
+| EPIC-6 | Keybind Robustness | In Progress |
+| EPIC-7 | Secondary Slot Active-Bar Filtering | Done (v0.6.0) |
+| EPIC-8 | Addon Branding & UI Polish | Done (v0.6.1) |
+| EPIC-9 | Proc Slot Reliability | Done |
+| EPIC-10 | Keybind Override | Done (v0.6.5) |
 
-### EPIC-5 Scope (Planned)
+### In Progress
 
-Addresses the three open bugs carried out of EPIC-4:
-
-1. **Override-aware deduplication** — `GetRotationSpells()` returns base IDs; deduplication must compare base-to-base, not override-to-base
-2. **`IsActionInRange` pcall guard** — the range check call at line ~1743 lacks a pcall wrapper
-3. **Secondary slot override resolution** — secondary spells from `GetRotationSpells()` should go through the same `GetActionInfo(realSlotID)` override path as the primary spell
+**EPIC-6 — Keybind Robustness:** Fixes a shapeshift-triggered keybind cache miss. When a player exits a form (e.g., Druid Travel Form) and acquires a target out of combat, keybind text is blank until combat starts. Fix: one-shot deferred `Refresh()` after `ACTIONBAR_SLOT_CHANGED` to re-populate the cache after the transient `FindSpellActionButtons` nil window closes. See `docs/epics/EPIC-6.md`.
 
 ---
 

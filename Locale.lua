@@ -142,7 +142,7 @@ if GetLocale() == "ptBR" then
         = "Fixe o slot de barra que HekiLight usa para o atalho de uma magia."
     L["Select a bar slot..."]          = "Selecione um slot de barra..."
     L["Pin keybind"]                   = "Fixar atalho"
-    L["Only one bar slot found — no override needed."] = "Apenas um slot encontrado — substituição desnecessária."
+    L["Spell not on any action bar — keybind cannot be pinned."] = "Magia não está em nenhuma barra de ação — atalho não pode ser fixado."
     L["Select a spell and a slot first."] = "Selecione uma magia e um slot primeiro."
     L["Keybind Overrides"]             = "Substituições de Atalho"
     L["No keybind overrides set."]     = "Nenhuma substituição de atalho definida."

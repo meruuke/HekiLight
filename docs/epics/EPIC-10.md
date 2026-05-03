@@ -1,6 +1,6 @@
 # EPIC-10: Keybind Override
 
-**Status:** Draft
+**Status:** Done
 **Goal:** Allow players to pin a preferred action bar slot (and therefore a specific keybind) for any spell that appears on multiple bars, and provide a clear upgrade path to a smart slot-priority heuristic.
 
 ---
@@ -36,14 +36,15 @@ No way exists today for a player to influence which slot wins.
 
 | Story | Title | Status |
 |-------|-------|--------|
-| 10.1 | Per-Spell Keybind Slot Override (Slash Command) | Draft |
-| 10.2 | Keybind Override: Extend Ignored Spells Settings Section | Draft |
+| 10.1 | Per-Spell Keybind Slot Override (Slash Command) | Done |
+| 10.2 | Keybind Override: Extend Ignored Spells Settings Section | Done (UI superseded by 10.3; data layer remains) |
+| 10.3 | Keybind Override — Standalone Settings Section | Done |
 
 ---
 
 ## Option C — Future Upgrade Path (Smart Slot Priority)
 
-Once Option A ships, EPIC-11 (or a story appended here) can introduce a heuristic:
+Once Option A ships, a future story (appended to EPIC-10 or a new epic) can introduce a heuristic:
 
 > When multiple bar slots contain the same spell and **no manual override exists**, prefer the slot whose action bar page is currently visible/active.
 
@@ -67,13 +68,13 @@ This is deliberately **not** in this EPIC — it should be validated against rea
 
 **Consequence:** If the player removes the spell from the pinned slot, the override becomes a graceful no-op — `GetSpellKeybind` falls through to the normal multi-slot scan.
 
-### ADR-10-3 — Extend the existing Ignored Spells section; do not register a new subpanel
+### ADR-10-3 — Dedicated "Keybind Overrides" standalone section (supersedes original)
 
-**Decision:** Story 10.2 modifies the inline `ignoreSec` block inside `BuildSettingsPanel`, adding a second dropdown (slot picker) and a "Pin keybind" button alongside the existing "Add to ignore list" button. A separate keybind-overrides row list is appended within the same collapsed section.
+**Decision:** Story 10.3 replaced the Story 10.2 approach. The keybind override UI lives in its own top-level `MakeSection(L["Keybind Overrides"])` collapsed section, appended after "Ignored Spells" in `BuildSettingsPanel`. It has its own spell dropdown (`kbSpellDD`), slot picker (`kbSlotDD`), pin button, and override row list. The Story 10.2 additions to `ignoreSec` were removed.
 
-**Rationale:** The Ignored Spells section already has a spell-selection dropdown that is populated live from `C_AssistedCombat.GetRotationSpells()` — exactly the right source for the keybind problem (only spells currently in the rotation are candidates). Building a second subpanel would duplicate that infrastructure and split per-spell preferences across two Settings pages. One section for all per-spell settings is a better UX.
+**Rationale:** In-game validation showed the feature was invisible when embedded in "Ignored Spells" — players had no reason to expand that section to find a keybind override tool. Discoverability requires its own entry point at the same level as every other HekiLight preference.
 
-**Consequence:** `BuildSettingsPanel` grows slightly. The two-step flow shares `selectedIgnoreSpellID` state — selecting a spell activates both the existing ignore button and the new slot picker controls simultaneously.
+**Consequence:** `ignoreSec` reverts to its pre-10.2 simplicity. The two features (ignore list and keybind overrides) are now independent — selecting a spell in one section does not affect the other.
 
 ### ADR-10-2 — `dbChar`, not `db`
 

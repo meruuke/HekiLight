@@ -11,7 +11,7 @@ EPICs 1–7 focused on correctness, robustness, and UX of the core overlay. By v
 
 | Story | Title | Status |
 |-------|-------|--------|
-| 8.1 | Addon Icon & Minimap Button Branding | InReview |
+| 8.1 | Addon Icon & Minimap Button Branding | Done |
 
 ## Out of Scope
 
