@@ -1277,7 +1277,7 @@ local function BuildSettingsPanel()
 
     local kbHintLabel = kbBody:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     kbHintLabel:SetPoint("TOPLEFT", 8, -60)
-    kbHintLabel:SetText(L["Only one bar slot found — no override needed."])
+    kbHintLabel:SetText(L["Spell not on any action bar — keybind cannot be pinned."])
     kbHintLabel:Hide()
 
     local kbListBaseY = -90
@@ -1293,9 +1293,14 @@ local function BuildSettingsPanel()
                 if not C_ActionBar.IsAssistedCombatAction(slot) then
                     local info = UIDropDownMenu_CreateInfo()
                     local key  = GetSlotKeybind(slot)
-                    info.text  = "Slot " .. slot .. " \226\134\146 " .. (key ~= "" and key or "(unbound)")
+                    local capturedSlot = slot
+                    local label = "Slot " .. slot .. " -> " .. (key ~= "" and key or "(unbound)")
                         .. (dbChar.keybindOverrides[selectedKbSpellID] == slot and " [pinned]" or "")
-                    info.func  = function() selectedKbSlotID = slot end
+                    info.text  = label
+                    info.func  = function()
+                        selectedKbSlotID = capturedSlot
+                        UIDropDownMenu_SetText(kbSlotDD, label)
+                    end
                     UIDropDownMenu_AddButton(info, level)
                 end
             end
@@ -1352,7 +1357,7 @@ local function BuildSettingsPanel()
                             end
                         end
                     end
-                    if nonRACount >= 2 then
+                    if nonRACount >= 1 then
                         UIDropDownMenu_SetText(kbSlotDD, L["Select a bar slot..."])
                         kbSlotDD:Show()
                         kbPinBtn:Show()
@@ -1378,7 +1383,7 @@ local function BuildSettingsPanel()
         local si  = C_Spell.GetSpellInfo(selectedKbSpellID)
         local name = si and si.name or tostring(selectedKbSpellID)
         local key  = GetSlotKeybind(selectedKbSlotID)
-        print("|cff88ccffHekiLight:|r Keybind pinned: " .. name .. " [" .. selectedKbSpellID .. "] \226\134\146 Slot " .. selectedKbSlotID .. " (" .. (key ~= "" and key or "unbound") .. ")")
+        print("|cff88ccffHekiLight:|r Keybind pinned: " .. name .. " [" .. selectedKbSpellID .. "] -> Slot " .. selectedKbSlotID .. " (" .. (key ~= "" and key or "unbound") .. ")")
         selectedKbSpellID = nil
         selectedKbSlotID  = nil
         UIDropDownMenu_SetText(kbSpellDD, L["Select a rotation spell..."])
@@ -1423,7 +1428,7 @@ local function BuildSettingsPanel()
                 (si and si.name or "(unknown)") ..
                 "  |cff888888[" .. sid .. "]|r" ..
                 "  Slot " .. slotID ..
-                " \226\134\146 " .. (key ~= "" and key or "(unbound)")
+                " -> " .. (key ~= "" and key or "(unbound)")
             )
             row.clearBtn:SetScript("OnClick", function()
                 dbChar.keybindOverrides[capturedSid] = nil

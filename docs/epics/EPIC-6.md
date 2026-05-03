@@ -1,6 +1,6 @@
 # EPIC-6: Keybind Robustness
 
-**Status:** Planned
+**Status:** In Progress
 **Version range:** v0.5.0 → current
 **Depends on:** EPIC-5 (Done)
 
