@@ -10,6 +10,8 @@
 --   C_AssistedCombat.GetRotationSpells()             → {spellID, ...}  (full queue)
 --   C_Spell.GetSpellCooldown(spellID)                → cooldown info (pcall-guarded; secret values)
 
+HekiLightST = {}  -- shared-state namespace for Settings.lua (EPIC-11)
+
 local ADDON_NAME = "HekiLight"
 local L = HekiLightLocale  -- populated by Locale.lua (loaded before this file)
 local DEBUG = false  -- toggle with /hkl debug
@@ -2286,6 +2288,23 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         InitDB()
         BuildSlots()
         BuildMinimapButton()
+        -- Populate HekiLightST after InitDB() (db/dbChar) and BuildSlots()
+        -- (procAlertFrame) are both complete; before BuildSettingsPanel() reads them.
+        -- Apply* functions and Refresh are module-level locals defined after InitDB(),
+        -- so they cannot be referenced inside InitDB() by Lua's upvalue scoping rules.
+        HekiLightST.db                  = db
+        HekiLightST.dbChar               = dbChar
+        HekiLightST.display              = display
+        HekiLightST.slots                = slots
+        HekiLightST.procAlertFrame       = procAlertFrame
+        HekiLightST.cachedRotSpells      = cachedRotSpells
+        HekiLightST.Refresh              = function() Refresh() end
+        HekiLightST.ApplySlotLayout      = ApplySlotLayout
+        HekiLightST.ApplyKeybindStyle    = ApplyKeybindStyle
+        HekiLightST.ApplyKeybindAnchor   = ApplyKeybindAnchor
+        HekiLightST.ApplyProcAlertLayout = ApplyProcAlertLayout
+        HekiLightST.ApplyPosition        = ApplyPosition
+        HekiLightST.L                   = L
         BuildSettingsPanel()
 
     elseif event == "PLAYER_ENTERING_WORLD" then
