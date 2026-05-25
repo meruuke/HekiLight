@@ -226,6 +226,8 @@ Additionally, the RA button shows only the immediate next spell. No planning hor
 | EPIC-8 | Addon Branding & UI Polish | Done (v0.6.1) |
 | EPIC-9 | Proc Slot Reliability | Done |
 | EPIC-10 | Keybind Override | Done (v0.6.5) |
+| EPIC-11 | Codebase Modularization — Settings Extraction | Ready |
+| EPIC-12 | ClassCodex Profile-Aware Rotation Integration | Ready |
 
 ### In Progress
 
