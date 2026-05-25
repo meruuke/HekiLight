@@ -11,9 +11,10 @@ There is **no build system, no package manager, no test suite, and no linter**. 
 ## File structure
 
 ```
-HekiLight.toc   — load order: Locale.lua then HekiLight.lua
+HekiLight.toc   — load order: Locale.lua → HekiLight.lua → Settings.lua
 Locale.lua      — HekiLightLocale global; identity-fallback metatable; ptBR block
-HekiLight.lua   — everything else; ~2476 lines, sectioned by banner comments
+HekiLight.lua   — core logic; ~2083 lines, sectioned by banner comments
+Settings.lua    — BuildSettingsPanel() extracted from HekiLight.lua (EPIC-11)
 ```
 
 Sections in `HekiLight.lua` (in order):
@@ -23,7 +24,8 @@ Sections in `HekiLight.lua` (in order):
 | Defaults / State | `DEFAULTS`, module-level locals, `db`/`dbChar` forward declarations |
 | Helpers | `InitDB`, `RebuildSlotBindings`, `FormatKey`, `GetSpellKeybind` |
 | Visibility Gate | `ShouldShow()` — hard stops then positive conditions |
-| UI Construction | `BuildSlots`, `BuildMinimapButton`, `BuildSettingsPanel`, `BuildIgnorePanel` |
+| UI Construction | `BuildSlots`, `BuildMinimapButton` |
+| Settings Panel | Stub comment only — `BuildSettingsPanel` lives in `Settings.lua` |
 | Spell Suggestion Detection | `GetActiveSuggestion`, `GetRealSlot`, `GetSuggestionQueue` |
 | Core Update Logic | `Refresh`, `UpdateProcAlert`, glow pulse functions |
 | Combat Polling | `StartPollLoop`, `StopPollLoop`, `IsAssistActive` |
@@ -35,9 +37,26 @@ Sections in `HekiLight.lua` (in order):
 
 ```
 ADDON_LOADED  → InitDB() → BuildSlots() → BuildMinimapButton()
-              → BuildSettingsPanel() → BuildIgnorePanel()
+              → populate HekiLightST → BuildSettingsPanel()
 PLAYER_ENTERING_WORLD → RebuildSlotBindings() → IsAssistActive() → StartPollLoop() → Refresh()
 ```
+
+## HekiLightST — shared-state namespace
+
+`HekiLightST` is a global table (`{}` at file top of `HekiLight.lua`) that bridges module-level locals into `Settings.lua`. It is populated inside the `ADDON_LOADED` handler, after `InitDB()` and `BuildSlots()` complete and before `BuildSettingsPanel()` is called.
+
+**Current keys (21):** `db`, `dbChar`, `display`, `slots`, `procAlertFrame`, `cachedRotSpells`, `Refresh`, `ApplySlotLayout`, `ApplyKeybindStyle`, `ApplyKeybindAnchor`, `ApplyProcAlertLayout`, `ApplyPosition`, `L`, `DEFAULTS`, `MAX_SLOTS`, `isEditMode` (getter fn), `EditModeRender`, `setSettingsCategory` (setter fn), `GetSlotKeybind`, `SetMinimapShown`, `StopGlowPulse`.
+
+`Settings.lua` consumes these via local aliases at the top of `BuildSettingsPanel()`:
+```lua
+local db = HekiLightST.db   -- same table as HekiLightDB; mutations persist
+local L  = HekiLightST.L
+-- etc.
+```
+
+**When adding a new module-local that `Settings.lua` needs:** add it to the `HekiLightST` population block in the `ADDON_LOADED` handler (~line 1487). For mutable state, expose a getter/setter function rather than a raw value copy.
+
+**Cross-chunk visibility rule:** Functions defined in `Settings.lua` that are called from `HekiLight.lua` **must be globals** (no `local`). WoW Lua files are separate chunks sharing `_G`; a `local function` in `Settings.lua` is invisible to `HekiLight.lua`'s event handlers.
 
 ## Core polling loop
 
@@ -63,12 +82,12 @@ Returns `spellID, realSlotID`:
 - `DEFAULTS` — single source of truth for all settings
 - `InitDB()` — fills `HekiLightDB` with missing keys only (never overwrites existing)
 - `db` — module-level local pointing to `HekiLightDB` after `ADDON_LOADED`
-- `dbChar` — points to `HekiLightDBChar` (per-character: `ignoredSpells`, `classDefaultsApplied`)
+- `dbChar` — points to `HekiLightDBChar` (per-character: `ignoredSpells`, `classDefaultsApplied`, `keybindOverrides`)
 - `HekiLightDB.sessionLog` — ring buffer (max 500 entries) of `DLog()` events; survives until next `/reload`; previous session saved to `lastSessionLog`
 
 ## Key conventions
 
-- **All state is module-level locals** — no OOP, no namespaces, no global table beyond `HekiLightDB` / `HekiLightDBChar`
+- **All state is module-level locals** — no OOP, no namespaces, no global table beyond `HekiLightDB` / `HekiLightDBChar` / `HekiLightST`
 - **Taint-sensitive calls always in `pcall()`** — `GetActionInfo`, `C_Spell.GetSpellCooldown`, `C_AssistedCombat.*`, and anything touching action bar slots
 - **`display` frame drives everything** — root `BackdropTemplate` frame; its `OnUpdate` is the poll loop; all child widgets are parented to it or to `procAlertFrame`
 - **Pre-allocated queue** — `queueCache` and `queueCount` are module-level; `GetSuggestionQueue` wipes and repopulates in-place to avoid per-frame table allocation
@@ -137,7 +156,7 @@ docs/epics/EPIC-{n}.md   — per-epic goals, stories, ADRs, and acceptance crite
 docs/stories/{n}.{m}.story.md — individual story files with AC and implementation notes
 ```
 
-EPICs 1–7 are **Done**.
+EPICs 1–11 are **Done** (EPIC-11 = Settings extraction; `BuildSettingsPanel` now in `Settings.lua`).
 
 Do **not** add `C_CooldownViewer` calls — permanently off-limits, causes combat taint (ADR-6).
 
