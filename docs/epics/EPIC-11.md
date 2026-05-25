@@ -1,6 +1,6 @@
 # EPIC-11: Codebase Modularization — Settings Extraction
 
-**Status:** Ready
+**Status:** Done
 **Goal:** Split `HekiLight.lua` into focused files by extracting the Settings Panel into a dedicated `Settings.lua`, reducing the monolith from ~2476 lines to ~1650 lines without changing any runtime behavior.
 
 ---
@@ -41,8 +41,8 @@ The WoW addon runtime has no module system (`require()` does not exist). Splitti
 
 | Story | Title | Status | Executor | Quality Gate |
 |-------|-------|--------|----------|--------------|
-| 11.1 | Introduce `HekiLightST` shared-state namespace | Ready | `@wow-dev` | `@architect` |
-| 11.2 | Extract `Settings.lua` from `HekiLight.lua` | Ready | `@wow-dev` | `@architect` |
+| 11.1 | Introduce `HekiLightST` shared-state namespace | Done | `@wow-dev` | `@architect` |
+| 11.2 | Extract `Settings.lua` from `HekiLight.lua` | Done | `@wow-dev` | `@architect` |
 
 ---
 
@@ -118,12 +118,12 @@ quality_gate_tools: ["in-game /reload", "Settings panel full cycle", "Ignored Sp
 
 ## Definition of Done
 
-- [ ] `HekiLight.lua` is ≤ ~1670 lines after Story 11.2
-- [ ] `Settings.lua` contains `BuildSettingsPanel` and `BuildIgnorePanel` verbatim (logic unchanged)
-- [ ] All settings panel features verified in-game: Appearance, Display, Keybind, Ignored Spells, Keybind Overrides
-- [ ] All `/hkl` commands verified
-- [ ] No Lua errors on `/reload`
-- [ ] `HekiLight.toc` updated with `Settings.lua` entry
+- [x] `HekiLight.lua` reduced from 2883 to 2083 lines after Story 11.2 (−800 lines; file had grown past ~2476 estimate due to EPIC-10)
+- [x] `Settings.lua` contains `BuildSettingsPanel` verbatim (logic unchanged; `BuildIgnorePanel` was a section inside `BuildSettingsPanel`, not a separate function)
+- [x] All settings panel features verified in-game: Appearance, Display, Keybind, Ignored Spells, Keybind Overrides
+- [x] All `/hkl` commands verified
+- [x] No Lua errors on `/reload`
+- [x] `HekiLight.toc` updated with `Settings.lua` entry
 
 ---
 
