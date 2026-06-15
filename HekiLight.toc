@@ -1,4 +1,4 @@
-## Interface: 120005
+## Interface: 120007
 ## Title: HekiLight
 ## IconTexture: Interface\AddOns\HekiLight\assets\icon
 ## Notes: Displays Blizzard's Rotation Assistant suggestions as a movable, skinnable icon overlay — inspired by Hekili.
