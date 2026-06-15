@@ -71,6 +71,10 @@ local DEFAULTS = {
     procAlertLocked   = true,           -- true = proc slot follows main display; false = drag independently
     procAlertX        = 0,              -- saved position when free (UIParent CENTER offset X)
     procAlertY        = 0,              -- saved position when free (UIParent CENTER offset Y)
+    -- ClassCodex integration (EPIC-12)
+    ccEnabled    = false,
+    ccProfile    = "Single Target",
+    ccHeroTalent = "",   -- empty string = auto-select first available heroTalent
 }
 
 -- Spells auto-added to dbChar.ignoredSpells on first load for the matching
@@ -138,6 +142,7 @@ local queueCount = 0  -- number of valid entries populated in the last GetSugges
 -- Used as a fallback by the Ignored Spells dropdown so it is never empty
 -- after a reload even when the settings panel is opened before combat.
 local cachedRotSpells = {}
+local lastCCFallbackSpec = 0  -- CC_FALLBACK DLog change-detection: spec index at which fallback was last logged
 
 -- ── Frames ───────────────────────────────────────────────────────────────────
 
@@ -980,6 +985,146 @@ local function GetSuggestionQueue(n)
     return queueCache
 end
 
+-- ── ClassCodex Data Reader ─────────────────────────────────────────────────────
+-- Parses an ordered spellID array from a ClassCodex `steps` table.
+-- Each step string encodes the primary spell as "{spellID}"; trailing condition
+-- text is stored but not evaluated here (Tier-1 evaluation deferred to Story 12.5).
+local function ParseCCSteps(steps)
+    local ids = {}
+    if not steps then return ids end
+    for _, step in ipairs(steps) do
+        local id = step:match("{(%d+)}")
+        if id then ids[#ids + 1] = tonumber(id) end
+    end
+    return ids
+end
+
+-- Reads ClassCodexData for the current player spec and returns:
+--   spellIDs, context, heroTalent   on success (spellIDs is a flat integer array)
+--   nil, "not_installed"            when ClassCodexData global is absent
+--   nil, "no_spec_data"             when no rotation table is found for this spec
+-- `profile` and `heroTalent` may be nil/"" to auto-select the first available.
+-- Logs the discovered ClassCodexData key structure via DLog("CC_KEYMAP") —
+-- this logging is the primary deliverable of the Story 12.1 spike.
+local function GetCCRotationData(profile, heroTalent)
+    if not ClassCodexData then
+        return nil, "not_installed"
+    end
+
+    local classToken = UnitClassBase("player"):upper()
+    local ccEntry = ClassCodexData[classToken]
+    if not ccEntry then
+        DLog("CC_KEYMAP", classToken .. ": no top-level key in ClassCodexData")
+        return nil, "no_spec_data"
+    end
+
+    -- Probe key structure: flat (.rotation directly on ccEntry) or nested by spec
+    -- sub-key (ccEntry[specName].rotation or ccEntry[specIndex].rotation).
+    local rotation
+    if ccEntry.rotation then
+        rotation = ccEntry.rotation
+        DLog("CC_KEYMAP", classToken .. ": flat key — ClassCodexData['" .. classToken .. "'].rotation, entries=" .. #rotation)
+    else
+        local specIdx  = GetSpecialization()
+        local specName = specIdx and select(2, GetSpecializationInfo(specIdx)) or nil
+        local sub
+        if specName then
+            sub = ccEntry[specName:lower()] or ccEntry[specName]
+        end
+        if not sub and specIdx then sub = ccEntry[specIdx] end
+        if sub and sub.rotation then
+            rotation = sub.rotation
+            local keyUsed = (specName and specName:lower()) or tostring(specIdx)
+            DLog("CC_KEYMAP", classToken .. ": nested key — ClassCodexData['" .. classToken .. "']['" .. keyUsed .. "'].rotation, entries=" .. #rotation)
+        end
+    end
+
+    if not rotation then
+        DLog("CC_KEYMAP", classToken .. ": rotation table not found — structure unknown, inspect ClassCodexData manually")
+        return nil, "no_spec_data"
+    end
+
+    local profileLow = (profile    and profile    ~= "") and profile:lower()    or nil
+    local heroLow    = (heroTalent and heroTalent ~= "") and heroTalent:lower() or nil
+
+    for _, entry in ipairs(rotation) do
+        local ctxOk  = not profileLow or (entry.context    and entry.context:lower()    == profileLow)
+        local heroOk = not heroLow    or (entry.heroTalent and entry.heroTalent:lower() == heroLow)
+        if ctxOk and heroOk then
+            return ParseCCSteps(entry.steps), entry.context or "?", entry.heroTalent or ""
+        end
+    end
+
+    -- Requested profile/heroTalent not matched — fall back to first entry.
+    if rotation[1] then
+        DLog("CC_KEYMAP", "profile/hero not matched — falling back to first entry: " .. (rotation[1].context or "?"))
+        return ParseCCSteps(rotation[1].steps), rotation[1].context or "?", rotation[1].heroTalent or ""
+    end
+
+    return nil, "no_spec_data"
+end
+
+-- ── ClassCodex Rotation Resolver ──────────────────────────────────────────────
+
+-- Returns spellID, realSlotID for the first mechanically castable spell in the
+-- CC priority list. Walks ParseCCSteps output applying GetRealSlot +
+-- IsUsableAction + IsSpellOnCooldown gates (same gates as GetSuggestionQueue).
+-- Returns nil, nil if list is exhausted or CC data is unavailable.
+local function GetCCSuggestion()
+    local ccData = GetCCRotationData(db.ccProfile, db.ccHeroTalent)
+    if not ccData or #ccData == 0 then return nil, nil end
+    for _, sid in ipairs(ccData) do
+        local rslot = GetRealSlot(sid)
+        if rslot and IsUsableAction(rslot) and not IsSpellOnCooldown(sid) then
+            return sid, rslot
+        end
+    end
+    return nil, nil
+end
+
+-- Populates queueCache/queueCount with up to n CC priority-list spells.
+-- Two-pass: pass 1 = off-cooldown spells; pass 2 = on-CD spells (greyed out).
+-- Reuses the same pre-allocated module-level vars as GetSuggestionQueue — safe
+-- because CC and RA queue functions are never called in the same Refresh() frame.
+local function GetCCSuggestionQueue(n)
+    for i = 1, queueCount do
+        queueCache[i].spellID        = nil
+        queueCache[i].realSlotID     = nil
+        queueCache[i].onCooldown     = false
+        queueCache[i].overrideSpellID = false
+    end
+    queueCount = 0
+    local ccData = GetCCRotationData(db.ccProfile, db.ccHeroTalent)
+    if not ccData or #ccData == 0 then return end
+
+    -- Pass 1: off-cooldown spells (highest priority — fill first)
+    for _, sid in ipairs(ccData) do
+        if queueCount >= n then break end
+        local rslot = GetRealSlot(sid)
+        if rslot and IsUsableAction(rslot) and not IsSpellOnCooldown(sid) then
+            queueCount = queueCount + 1
+            queueCache[queueCount].spellID        = sid
+            queueCache[queueCount].realSlotID     = rslot
+            queueCache[queueCount].onCooldown     = false
+            queueCache[queueCount].overrideSpellID = false
+        end
+    end
+
+    -- Pass 2: on-cooldown spells (displayed greyed out)
+    -- IsSpellOnCooldown/not gate is mutually exclusive with pass 1 — no dedup needed.
+    for _, sid in ipairs(ccData) do
+        if queueCount >= n then break end
+        local rslot = GetRealSlot(sid)
+        if rslot and IsUsableAction(rslot) and IsSpellOnCooldown(sid) then
+            queueCount = queueCount + 1
+            queueCache[queueCount].spellID        = sid
+            queueCache[queueCount].realSlotID     = rslot
+            queueCache[queueCount].onCooldown     = true
+            queueCache[queueCount].overrideSpellID = false
+        end
+    end
+end
+
 -- ── Core Update Logic ─────────────────────────────────────────────────────────
 
 -- ── Proc-Glow Border Pulse ────────────────────────────────────────────────────
@@ -1174,7 +1319,25 @@ Refresh = function()
         return
     end
 
-    local queue   = GetSuggestionQueue(db.numSuggestions)
+    local queue
+    if db.ccEnabled then
+        local ccData = GetCCRotationData(db.ccProfile, db.ccHeroTalent)
+        if ccData and #ccData > 0 then
+            lastCCFallbackSpec = 0
+            GetCCSuggestionQueue(db.numSuggestions)
+            queue = queueCache
+        else
+            local spec = GetSpecialization()
+            if spec ~= lastCCFallbackSpec then
+                DLog("CC_FALLBACK", "No CC data for spec " .. tostring(spec) .. "; using RA")
+                lastCCFallbackSpec = spec
+            end
+            queue = GetSuggestionQueue(db.numSuggestions)
+        end
+    else
+        lastCCFallbackSpec = 0
+        queue = GetSuggestionQueue(db.numSuggestions)
+    end
     local primary = queue[1]
 
     if not primary or not primary.spellID then
@@ -1685,6 +1848,7 @@ local function PrintHelp()
     print("  /hkl kb list               list all keybind overrides")
     print("  /hkl debug                 toggle debug output")
     print("  /hkl status                print current Rotation Assistant state")
+    print("  /hkl ccdata                print ClassCodex rotation data for current spec")
 end
 
 SLASH_HEKILIGHT1 = "/hekilight"
@@ -2075,6 +2239,30 @@ SlashCmdList["HEKILIGHT"] = function(msg)
             print("  Suppression: |cff00ff00none|r — icon allowed to show")
         else
             print("  Suppression: |cffff4444" .. suppressReason .. "|r — icon hidden")
+        end
+
+    elseif msg == "ccdata" then
+        local ok, err = pcall(function()
+            local spells, ctx, hero = GetCCRotationData(nil, nil)
+            if not spells then
+                if ctx == "not_installed" then
+                    print("|cff88ccffHekiLight:|r ClassCodex not installed")
+                else
+                    print("|cff88ccffHekiLight:|r No data for current spec")
+                end
+                return
+            end
+            local heroLabel = (hero and hero ~= "") and hero or "—"
+            print(string.format("|cff88ccffHekiLight ClassCodex data:|r  profile: %s   heroTalent: %s   spells: %d",
+                ctx, heroLabel, #spells))
+            for i, id in ipairs(spells) do
+                local si = C_Spell.GetSpellInfo(id)
+                local name = (si and si.name) or "Unknown"
+                print(string.format("  [%d] %s (%d)", i, name, id))
+            end
+        end)
+        if not ok then
+            print("|cffff4444HekiLight ccdata error:|r " .. tostring(err))
         end
 
     else

@@ -1,0 +1,115 @@
+storyId: "12.2"
+storyTitle: "CC Rotation Resolver"
+reviewDate: "2026-06-15"
+reviewedBy: "Quinn (@qa)"
+verdict: PASS
+qualityScore: 88
+
+issues:
+  - id: M1
+    severity: medium
+    category: code
+    description: >
+      GetCCSuggestion() is defined as a module-level local but is never called.
+      Refresh() drives the primary slot via queue[1] from GetCCSuggestionQueue(),
+      making GetCCSuggestion() dead code (~16 lines).
+    recommendation: >
+      Remove GetCCSuggestion() in the next story touching this section, OR retain
+      as a named utility if Story 12.5 (condition evaluation) plans to call it
+      for single-candidate lookup. Document the intent in a comment.
+    blocking: false
+
+  - id: M2
+    severity: medium
+    category: performance
+    description: >
+      GetCCRotationData() is called twice per Refresh() frame when CC mode is
+      active and data is available: once in the Refresh() routing block (availability
+      check) and once internally inside GetCCSuggestionQueue(). Each call invokes
+      UnitClassBase("player") and traverses the rotation table. At the default
+      poll rate (0.05 s) this means ~40 combined WoW API + Lua table reads/second.
+    recommendation: >
+      Pass the resolved ccData (or the spellID array) directly into
+      GetCCSuggestionQueue(n, ccData) rather than having the function re-derive it.
+      Eliminates the redundant call with a trivial signature change. Defer to
+      Story 12.3 or a dedicated cleanup story.
+    blocking: false
+
+  - id: L1
+    severity: low
+    category: docs
+    description: >
+      CLAUDE.md §Logging system lists DLog tags in use but is missing two tags
+      introduced across EPIC-12: CC_KEYMAP (Story 12.1) and CC_FALLBACK (Story 12.2).
+    recommendation: >
+      Append CC_KEYMAP and CC_FALLBACK to the DLog tags list in CLAUDE.md before
+      closing EPIC-12.
+    blocking: false
+
+checks:
+  code_review:
+    status: PASS
+    notes: >
+      Clean, minimal implementation consistent with codebase conventions.
+      All new functions are module-level locals. Section banners follow
+      established pattern. DEFAULTS keys added correctly. GetCCRotationData
+      key-structure probe (flat → specName lower → specName original → specIndex)
+      is exhaustive. pcall scoping is correct (call site only, not internal).
+      Case-insensitive profile/heroTalent matching is correct.
+      overrideSpellID set to false (appropriate — talent override not applicable
+      in CC pipeline). M1 (dead code) and M2 (double call) noted above.
+
+  unit_tests:
+    status: N/A
+    notes: >
+      No test suite exists for this addon by design (CLAUDE.md §What this addon does).
+      In-game validation (Task 5) serves as the acceptance test surface.
+
+  acceptance_criteria:
+    status: PASS
+    notes: >
+      AC1: Refresh() routes to GetCCSuggestionQueue when ccEnabled=true and ccData
+      available; queue[1] = first off-cooldown CC spell. PASS.
+      AC2: Two-pass queue fill sets onCooldown=true in pass 2; downstream display
+      code renders these greyed (unchanged). PASS.
+      AC3: queue entry shape (spellID, realSlotID, onCooldown, overrideSpellID)
+      identical to RA path; all downstream Refresh code untouched. PASS.
+      AC4: `ccData and #ccData > 0` guard in routing block falls through to
+      GetSuggestionQueue. PASS.
+      AC5: `spec ~= lastCCFallbackSpec` guard prevents per-frame DLog flood.
+      Reset to 0 in RA branch ensures correct re-logging on CC re-enable. PASS.
+      AC6: Zero Lua errors confirmed in-game (Task 5). PASS.
+
+  no_regressions:
+    status: PASS
+    notes: >
+      RA mode (ccEnabled=false) follows the else branch; lastCCFallbackSpec reset
+      to 0; GetSuggestionQueue called identically to pre-story behavior.
+      queueCache/queueCount wipe pattern in GetCCSuggestionQueue matches
+      GetSuggestionQueue exactly. All downstream Refresh() code untouched.
+
+  performance:
+    status: CONCERNS
+    notes: >
+      See M2. Double GetCCRotationData call per frame. Not a blocker at this
+      poll rate; pure Lua table reads are fast. Flagged for future cleanup.
+
+  security:
+    status: PASS
+    notes: >
+      ClassCodexData is a read-only plain Lua global. No user-controlled input
+      reaches table keys. No taint-sensitive APIs in the CC data reader path.
+      ADR-6 (C_CooldownViewer ban) not violated.
+
+  documentation:
+    status: CONCERNS
+    notes: >
+      /hkl ccdata added to PrintHelp(). CLAUDE.md DLog tag list stale (L1).
+      No other documentation gaps. New function signatures are self-documenting.
+
+riskProfile: LOW
+notes: >
+  Solid resolver implementation. All 6 ACs met and in-game validated. The two
+  medium findings (dead code, double call) do not affect correctness or user
+  experience. L1 (CLAUDE.md stale tags) is a housekeeping item for EPIC-12
+  closeout. Story is ready to proceed to Done.
