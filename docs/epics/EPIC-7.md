@@ -37,7 +37,7 @@ Both erode trust in the addon and affect a common Mythic+ and raid build.
 - [x] Resto Druid in Cat Form with a target sees Cat Form suggestions before combat
 - [x] No regression for caster-form suggestions
 - [x] No regression for non-shapeshifting classes
-- [ ] SLOT2 diagnostic DLog removed (flood introduced during 7.1 debugging)
+- [x] SLOT2 diagnostic DLog removed (flood introduced during 7.1 debugging)
 
 ## Forbidden APIs
 
