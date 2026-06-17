@@ -1294,7 +1294,7 @@ local function BuildSettingsPanel()
                     local info = UIDropDownMenu_CreateInfo()
                     local key  = GetSlotKeybind(slot)
                     local capturedSlot = slot
-                    local label = "Slot " .. slot .. " -> " .. (key ~= "" and key or "(unbound)")
+                    local label = (key ~= "" and key or "(unbound)")
                         .. (dbChar.keybindOverrides[selectedKbSpellID] == slot and " [pinned]" or "")
                     info.text  = label
                     info.func  = function()
@@ -1337,17 +1337,17 @@ local function BuildSettingsPanel()
             local info    = UIDropDownMenu_CreateInfo()
             info.text     = (entry.ignored and "|cff888888" or "")
                             .. entry.name
-                            .. "  |cff666666[" .. entry.sid .. "]|r"
                             .. (entry.ignored and " (ignored)|r" or "")
             info.icon     = entry.iconID
             info.disabled = entry.ignored
             if not entry.ignored then
-                local capturedSid  = entry.sid
-                local capturedName = entry.name
+                local capturedSid    = entry.sid
+                local capturedName   = entry.name
+                local capturedIconID = entry.iconID
                 info.func = function()
                     selectedKbSpellID = capturedSid
                     selectedKbSlotID  = nil
-                    UIDropDownMenu_SetText(kbSpellDD, capturedName .. " [" .. capturedSid .. "]")
+                    UIDropDownMenu_SetText(kbSpellDD, "|T" .. capturedIconID .. ":16:16|t " .. capturedName)
                     local ok2, slots2 = pcall(C_ActionBar.FindSpellActionButtons, capturedSid)
                     local nonRACount  = 0
                     if ok2 and slots2 then
@@ -1426,9 +1426,7 @@ local function BuildSettingsPanel()
             row.icon:SetTexture(si and si.iconID or "Interface\\Icons\\INV_Misc_QuestionMark")
             row.label:SetText(
                 (si and si.name or "(unknown)") ..
-                "  |cff888888[" .. sid .. "]|r" ..
-                "  Slot " .. slotID ..
-                " -> " .. (key ~= "" and key or "(unbound)")
+                "  →  " .. (key ~= "" and key or "(unbound)")
             )
             row.clearBtn:SetScript("OnClick", function()
                 dbChar.keybindOverrides[capturedSid] = nil
