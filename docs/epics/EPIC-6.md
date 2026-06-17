@@ -1,6 +1,6 @@
 # EPIC-6: Keybind Robustness
 
-**Status:** Planned
+**Status:** Done
 **Version range:** v0.5.0 → current
 **Depends on:** EPIC-5 (Done)
 
@@ -16,7 +16,7 @@ Players who use Travel Form or other shapeshift abilities between pulls see no k
 
 | ID  | Title                                        | Status  |
 |-----|----------------------------------------------|---------|
-| 6.1 | Shapeshift-resilient keybind cache repopulation | Draft |
+| 6.1 | Shapeshift-resilient keybind cache repopulation | Done |
 
 ## Key Technical Context
 
@@ -28,10 +28,10 @@ Players who use Travel Form or other shapeshift abilities between pulls see no k
 
 ## Acceptance Criteria (Epic-Level)
 
-- [ ] Keybind text visible immediately when a target is acquired after shapeshifting, before combat
-- [ ] No regression for classes that do not shapeshift
-- [ ] `KEYBIND` DLog tag emitted on lookup success and cache-miss for observability
-- [ ] Deferred Refresh does not fire in combat (poll loop already handles that path)
+- [x] Keybind text visible immediately when a target is acquired after shapeshifting, before combat
+- [x] No regression for classes that do not shapeshift
+- [x] `KEYBIND` DLog tag emitted on lookup success and cache-miss for observability
+- [x] Deferred Refresh does not fire in combat (poll loop already handles that path)
 
 ## Forbidden APIs
 
