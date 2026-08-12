@@ -25,7 +25,7 @@ Blizzard's RA button is embedded in the action bar. It cannot be repositioned, r
 
 ## Key Technical Decisions
 
-- **ADR-1:** Single-file addon, no build system — deployed via `/reload`
+- **ADR-1:** ~~Single-file addon~~ Multi-file addon (Settings.lua extracted in EPIC-11); no build system — deployed via `/reload`. See ADR-11-2 for load-order rules.
 - **ADR-2:** OnUpdate polling at 50ms (the only way to catch suggestion changes frame-by-frame)
 - **ADR-3:** Two-layer suggestion detection: `GetNextCastSpell` primary, `GetActionInfo` fallback
 - **ADR-4:** `realSlotID` pattern — never use RA slots for range/keybind data (taint-protected)
