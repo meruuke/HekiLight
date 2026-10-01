@@ -1103,6 +1103,24 @@ local function StartAlertGlowPulse()
     ShowGlow(procAlertFrame)
 end
 
+-- Shared out-of-range tint: desaturate + red when the spell cannot reach the target
+-- (Blizzard's Cooldown Manager look). `extraDesat` keeps the icon desaturated for
+-- another reason (a secondary slot on cooldown). Used by both the suggestion slots and
+-- the proc-alert slot, so the proc icon also fades to red — even while it is glowing.
+local function ApplyRangeTint(iconTexture, realSlot, extraDesat)
+    local outOfRange = false
+    if db.showOutOfRange and realSlot then
+        local ok, inRange = pcall(C_ActionBar.IsActionInRange, realSlot)
+        if ok and inRange == false then outOfRange = true end
+    end
+    iconTexture:SetDesaturated(outOfRange or extraDesat or false)
+    if outOfRange then
+        iconTexture:SetVertexColor(1.0, 0.30, 0.30)
+    else
+        iconTexture:SetVertexColor(1, 1, 1)
+    end
+end
+
 -- Show or hide the proc-alert icon (the extra frame to the LEFT of display).
 -- Sets currentAlertSpellID so Refresh()'s slot loop can exclude duplicates.
 -- Must be called BEFORE the secondary slot render loop in Refresh().
@@ -1151,6 +1169,8 @@ local function UpdateProcAlert(primarySpellID)
         local si = C_Spell.GetSpellInfo(alertSpellID)
         if si and si.iconID then
             procAlertFrame.iconTexture:SetTexture(si.iconID)
+            -- Fade the proc icon to red when out of range too, independent of its glow.
+            ApplyRangeTint(procAlertFrame.iconTexture, GetRealSlot(alertSpellID), false)
             if db.showKeybind and procAlertFrame.keybindText then
                 procAlertFrame.keybindText:SetText(GetSpellKeybind(alertSpellID))
                 procAlertFrame.keybindText:Show()
@@ -1177,22 +1197,11 @@ local function UpdateProcAlert(primarySpellID)
     procAlertFrame:Hide()
 end
 
--- Applies the per-slot icon tint: desaturated + red when the spell is out of range
--- (Blizzard's Cooldown Manager look), combined with the on-cooldown desaturation for
--- secondary slots. Range is checked on the slot's own realSlotID so every slot — not
--- just the primary — fades to red when the target is out of reach.
+-- Per-slot icon tint: out-of-range red fade (checked on the slot's own realSlotID so
+-- every slot, not just the primary, reacts) combined with the on-cooldown desaturation
+-- for secondary slots.
 local function ApplyIconTint(slot, i, entry)
-    local outOfRange = false
-    if db.showOutOfRange and entry.realSlotID then
-        local ok, inRange = pcall(C_ActionBar.IsActionInRange, entry.realSlotID)
-        if ok and inRange == false then outOfRange = true end
-    end
-    slot.iconTexture:SetDesaturated(outOfRange or (i > 1 and entry.onCooldown))
-    if outOfRange then
-        slot.iconTexture:SetVertexColor(1.0, 0.30, 0.30)
-    else
-        slot.iconTexture:SetVertexColor(1, 1, 1)
-    end
+    ApplyRangeTint(slot.iconTexture, entry.realSlotID, i > 1 and entry.onCooldown)
 end
 
 Refresh = function()
@@ -1384,6 +1393,15 @@ local function StopPollLoop()
     Log("Poll loop stopped")
 end
 
+-- Drive the poll purely by display visibility: whenever the display is shown (by any
+-- path), keep refreshing so movement-driven state (the out-of-range tint) updates live
+-- rather than only when the suggestion changes; when it hides, stop (OnUpdate is free
+-- while hidden). This supersedes the old combat-only gating, which left the tint frozen
+-- out of combat and whenever Rotation Assistant wasn't flagged "active".
+display:SetScript("OnShow", StartPollLoop)
+display:SetScript("OnHide", StopPollLoop)
+display:Hide()  -- start hidden so the first Refresh that shows it fires OnShow → poll starts
+
 -- ── Edit Mode ─────────────────────────────────────────────────────────────────
 
 -- Renders all slot frames as visible placeholders. Called by Refresh() whenever
@@ -1559,8 +1577,10 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
     elseif event == "PLAYER_REGEN_ENABLED" then
         inCombat = false
         lastRawSuggID = nil
-        StopPollLoop()
         wipe(recentlyCastSpells)
+        -- Refresh hides the display if it should no longer show (OnHide stops the poll);
+        -- if it stays visible, the OnShow-driven poll keeps running so the range tint
+        -- continues to track movement out of combat.
         Refresh()
         Log("Left combat")
 
