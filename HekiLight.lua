@@ -1162,7 +1162,9 @@ local function UpdateProcAlert(primarySpellID)
                 DLog("ALERT_SHOW", string.format("spellID=%d (%s)", alertSpellID, si.name or "?"))
             end
             procAlertFrame:Show()
-            StartAlertGlowPulse()  -- proc alert always glows (it only shows for proc spells)
+            -- The glow border is gated by showProcGlow; the proc-alert icon itself
+            -- stays (showProcAlert controls the icon, showProcGlow the glow).
+            if db.showProcGlow then StartAlertGlowPulse() else StopAlertGlowPulse() end
             return
         end
     end
@@ -1808,6 +1810,7 @@ SlashCmdList["HEKILIGHT"] = function(msg)
     elseif msg == "procglow off" then
         db.showProcGlow = false
         StopGlowPulse()
+        Refresh()  -- also clears the proc-alert slot glow via UpdateProcAlert
         print("|cff88ccffHekiLight:|r " .. L["Proc glow border disabled."])
 
     elseif msg:find("^kbsize%s") then

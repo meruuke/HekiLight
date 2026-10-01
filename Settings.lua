@@ -245,7 +245,7 @@ function BuildSettingsPanel()
     CB(dispBody, cur, L["Spell Proc Glow"],
         L["Pulse the icon border gold when the suggested spell has an active proc glow."],
         function() return db.showProcGlow end,
-        function(v) db.showProcGlow = v; if not v then StopGlowPulse() end end)
+        function(v) db.showProcGlow = v; if not v then StopGlowPulse() end; Refresh() end)
     CB(dispBody, cur, L["Show proc-alert icon"],
         L["Show an extra icon to the left when a proc spell is active but not the main suggestion."],
         function() return db.showProcAlert end,
