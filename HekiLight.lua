@@ -49,11 +49,9 @@ local DEFAULTS = {
     scale          = 1.0,
     locked         = false,
     showKeybind    = true,
-    showCooldown   = false,   -- Rotation Assistant cooldown data is taint-protected; enable at your own risk
     showOutOfRange = true,
     showProcGlow   = true,    -- pulse border gold when the suggested spell has an active proc glow
     pollRate       = 0.05,   -- how often (seconds) to refresh while in combat
-    sounds         = false,  -- subtle sound when icon appears in combat
     minimapAngle   = 225,    -- degrees around minimap (0=right, 90=top, 180=left, 270=bottom)
     minimapShow    = true,
     keybindFontSize = 10,   -- pt size for keybind label
@@ -431,13 +429,6 @@ local function BuildSlots()
     display.editBanner:SetText(L["EDIT_BANNER"])
     display.editBanner:Hide()
 
-    -- Play a subtle sound when the container first appears in combat
-    display:SetScript("OnShow", function()
-        if db and db.sounds then
-            PlaySoundFile("Interface\\Buttons\\UI-CheckBox-Up.wav", "SFX")
-        end
-    end)
-
     -- Drag support on the container
     display:SetMovable(true)
     display:EnableMouse(not db.locked)
@@ -475,13 +466,6 @@ local function BuildSlots()
         slot.iconTexture:SetAllPoints(slot.frame)
         slot.iconTexture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
-        if i == 1 then
-            -- Cooldown spiral (primary slot only)
-            slot.cooldownFrame = CreateFrame("Cooldown", "HekiLightCooldown", slot.frame, "CooldownFrameTemplate")
-            slot.cooldownFrame:SetAllPoints(slot.frame)
-            slot.cooldownFrame:SetDrawEdge(true)
-            slot.cooldownFrame:SetHideCountdownNumbers(false)
-        end
         -- Out-of-range feedback is applied as an icon desaturate + red tint in Refresh
         -- (all slots); the proc glow is a shared animated overlay via ShowGlow().
 
@@ -1351,7 +1335,6 @@ Refresh = function()
     end
 
     -- Primary-slot decorations (slot 1 only)
-    local s1    = slots[1]
     local sid   = primary.spellID
     local rslot = primary.realSlotID
     Log("Showing spellID", sid, "iconID", primaryInfo.iconID, "realSlot", tostring(rslot))
@@ -1363,23 +1346,6 @@ Refresh = function()
         lastLogSuggID = sid
     end
     UpdateGlowState(sid)
-
-    -- Cooldown — use C_Spell API (no slot needed; taint guard still applies)
-    if db.showCooldown and s1.cooldownFrame then
-        local ok = pcall(function()
-            local cd = C_Spell.GetSpellCooldown(sid)
-            local startTime = cd and cd.startTime or 0
-            if startTime > 0 then
-                s1.cooldownFrame:SetCooldown(startTime, cd.duration or 0)
-                s1.cooldownFrame:Show()
-            else
-                s1.cooldownFrame:Hide()
-            end
-        end)
-        if not ok then s1.cooldownFrame:Hide() end
-    elseif s1.cooldownFrame then
-        s1.cooldownFrame:Hide()
-    end
 
     -- Out-of-range feedback is applied per-slot in the render loop above
     -- (ApplyIconTint), so the display reaches every suggestion, not just slot 1.
@@ -1712,7 +1678,6 @@ local function PrintHelp()
     print("  /hkl keybind on|off        toggle keybind text")
     print("  /hkl range on|off          toggle out-of-range tint")
     print("  /hkl procglow on|off       toggle proc glow border pulse")
-    print("  /hkl sounds on|off         toggle combat sounds")
     print("  /hkl kbsize <8–24>         set keybind text font size")
     print("  /hkl kbcolor <r> <g> <b>   set keybind text color (0–1 each; e.g. 1 0.82 0 = yellow)")
     print("  /hkl kboutline outline|thick|none  set keybind text outline style")
@@ -1844,14 +1809,6 @@ SlashCmdList["HEKILIGHT"] = function(msg)
         db.showProcGlow = false
         StopGlowPulse()
         print("|cff88ccffHekiLight:|r " .. L["Proc glow border disabled."])
-
-    elseif msg == "sounds on" then
-        db.sounds = true
-        print("|cff88ccffHekiLight:|r " .. L["Sounds enabled."])
-
-    elseif msg == "sounds off" then
-        db.sounds = false
-        print("|cff88ccffHekiLight:|r " .. L["Sounds disabled."])
 
     elseif msg:find("^kbsize%s") then
         local v = tonumber(msg:match("^kbsize%s+(.+)$"))

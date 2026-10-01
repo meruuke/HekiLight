@@ -120,7 +120,6 @@ Returns `spellID, realSlotID`:
 | `show always\|active` | Visibility mode |
 | `hide dead\|vehicle\|cinematic on\|off` | Hard-stop toggles |
 | `minimap on\|off` | Minimap button |
-| `sounds` | Toggle combat sound |
 | `kbsize <8–24>` | Keybind font size |
 | `kbcolor <r> <g> <b>` | Keybind color (0–1 each) |
 | `kboutline outline\|thick\|none` | Keybind outline style |
