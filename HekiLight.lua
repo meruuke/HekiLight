@@ -958,7 +958,7 @@ end
 -- Applied to whichever frame should signal a proc: the proc-alert slot when it is
 -- enabled, otherwise the primary slot. State is cached on the host frame.
 
-local ALERT_SCALE = 1.4   -- native overlay size relative to the icon (Blizzard's ratio)
+local ALERT_SCALE = 1.6   -- native overlay size relative to the icon (bumped slightly so the glow ring sits outside the keybind corner)
 local GLOW_SCALE  = 1.8   -- fallback border size relative to the icon
 
 -- Fallback only: a self-drawn gold border pulsed by a looping AnimationGroup.
