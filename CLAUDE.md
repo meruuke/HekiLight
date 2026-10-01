@@ -73,9 +73,9 @@ Returns `spellID, realSlotID`:
 
 `realSlotID` is a **regular** action bar slot for the same spell (not an RA slot) — needed for `IsActionInRange` and keybind lookup because RA slots are taint-protected.
 
-`resolveSecondary(sid)` wraps `GetRealSlot(sid)` and then reads `GetActionInfo(rslot)` (pcall-guarded) to resolve talent overrides — e.g. base Death and Decay resolves to Defile's spellID when talented. Returns `rslot, effectiveID`. Used by `GetSuggestionQueue` for all secondary slots so dedup and icon display are override-aware.
+`resolveSecondary(sid)` wraps `GetRealSlot(sid)` and then reads `GetActionInfo(rslot)` (pcall-guarded) to resolve talent overrides — e.g. base Death and Decay resolves to Defile's spellID when talented. Returns `rslot, effectiveID`. Used by `GetSuggestionQueue` for all secondary slots so dedup, icon display, **and the cooldown check** are override-aware.
 
-`GetSuggestionQueue(n)` builds up to `n` entries using `GetActiveSuggestion()` for slot 1, then `C_AssistedCombat.GetRotationSpells()` for slots 2–n. Two-pass: off-cooldown spells fill first, then on-CD spells (displayed greyed out). Both passes guard with `rslot and IsUsableAction(rslot)` to exclude form-restricted spells (e.g. Cat Form spells when not in Cat Form). A session-level copy of the queue is kept in `cachedRotSpells` for the Ignored Spells dropdown.
+`GetSuggestionQueue(n)` builds up to `n` entries using `GetActiveSuggestion()` for slot 1, then `C_AssistedCombat.GetRotationSpells()` for slots 2–n. Two-pass: off-cooldown spells fill first, then on-CD spells (displayed greyed out). The cooldown check is `IsSpellOnCooldown(effectiveID)` — the **override** ID from `resolveSecondary`, not the base ID from `GetRotationSpells` — because empower spells (Fire Breath / Eternity Surge with Font of Magic) track their cooldown on the override; checking the base ID would never see the CD and the spell would never grey. Both passes guard with `rslot and IsUsableAction(rslot)` to exclude form-restricted spells (e.g. Cat Form spells when not in Cat Form). A session-level copy of the queue is kept in `cachedRotSpells` for the Ignored Spells dropdown.
 
 ## SavedVariables pattern
 
@@ -93,6 +93,7 @@ Returns `spellID, realSlotID`:
 - **Pre-allocated queue** — `queueCache` and `queueCount` are module-level; `GetSuggestionQueue` wipes and repopulates in-place to avoid per-frame table allocation
 - **Keybind lookup chain**: `spellID → FindSpellActionButtons() → filter RA slots → SLOT_BINDINGS[slot] → GetBindingKey() → FormatKey()`; last known good value cached in `keybindCache[spellID]`
 - **`GetSpellBaseCooldown`** (not `GetSpellCooldown`) identifies real CDs (>1500 ms) vs GCD for the secondary-slot grey filter
+- **`IsSpellOnCooldown`** (grey filter, ADR-13) reads the live cooldown: `not (IsSpellAvailable or HasChargeReady)`, gated on base CD > 1500 ms. `IsSpellAvailable` is **GCD-aware** — it treats `GetSpellCooldown.duration < 1.55` as available, because Blizzard returns a plain ~1.5 for the GCD but a secret number for a real CD (the `<` throws under taint → pcall → on CD). This catches unwitnessed/pre-combat/proc cooldowns with no cast tracking. **Do not** compute the GCD from `GetHaste()` in combat — it returns a secret number and arithmetic on it throws. Primary slot (slot 1) never desaturates by design
 - **Settings panels**: `Settings.RegisterCanvasLayoutCategory` / `RegisterCanvasLayoutSubcategory`; sliders built manually with `BackdropTemplate` (`OptionsSliderTemplate` is deprecated in 12.0)
 - **Proc-glow**: tracked via `SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE` events into `activeOverlaySpells`; also cross-checked with `C_SpellActivationOverlay.IsSpellOverlayed()` at render time to catch procs already active on `/reload`
 - **Minimap button**: 80 px radius from `Minimap:GetCenter()` at `db.minimapAngle` degrees; drag recalculates angle with `math.atan2`
@@ -142,7 +143,9 @@ Two levels:
 - `Log(...)` — debug-only (`DEBUG = true` via `/hkl debug`); prints to chat immediately
 - `DLog(tag, msg)` — always active; writes timestamped entries to `HekiLightDB.sessionLog`; read with `/hkl log [N]`
 
-`DLog` tags in use: `SUGGEST`, `SLOT`, `RAW_SUGG`, `SUPPRESS`, `ALERT_SHOW`, `ALERT_HIDE`, `ALERT_GLOW`, `OVERRIDE`, `KEYBIND`
+`DLog` tags in use: `SUGGEST`, `SLOT`, `RAW_SUGG`, `SUPPRESS`, `ALERT_SHOW`, `ALERT_HIDE`, `ALERT_GLOW`, `OVERRIDE`, `KEYBIND`, `CDCHECK`
+
+`CDCHECK` logs the cooldown decision for each secondary rotation spell (`sid`, resolved `eff` ID, `baseCD`, `onCD`) on change — added to diagnose empower/override spells that weren't greying. Read with `/hkl log`.
 
 `OVERRIDE` fires every time a talent-override substitution occurs (e.g., base Death and Decay → Defile). Change-detection guards (`lastLogSuggID`, `lastSlotSpellID`, `lastSkippedAlertID`) prevent high-frequency events from flooding the 500-entry buffer.
 
@@ -171,7 +174,8 @@ C_ActionBar.IsAssistedCombatAction(slotID)         -- is slot a RA slot?
 C_ActionBar.FindSpellActionButtons(spellID)        -- real bar slots for spell
 C_ActionBar.IsActionInRange(slotID)                -- range check (use realSlotID, not RA slot)
 C_Spell.GetSpellInfo(spellID)                      -- .iconID, .name
-C_Spell.GetSpellCooldown(spellID)                  -- cooldown (pcall)
+C_Spell.GetSpellCooldown(spellID)                  -- cooldown (pcall; secret number in combat)
+C_Spell.GetSpellCharges(spellID)                   -- .currentCharges; banked charge = not on CD (pcall)
 GetSpellBaseCooldown(spellID)                      -- base CD in ms; >1500 = real CD not GCD
 C_SpellActivationOverlay.IsSpellOverlayed(spellID) -- proc glow active?
 IsPlayerSpell(spellID)                             -- filter unlearned spells
