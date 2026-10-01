@@ -210,3 +210,30 @@ The `ignoredSpells` list is inherently class-specific: a spell ignored on a Warl
 - Log survives `/reload` and WoW crashes that flush SavedVariables.
 - `table.remove(t, 1)` is O(n) — at 500 entries this is negligible but would degrade if `MAX_LOG` were significantly increased; a circular index would be O(1).
 - Change-detection guards (`lastLogSuggID`, `lastSlotSpellID`, `lastSkippedAlertID`) prevent high-frequency events from flooding the buffer.
+
+---
+
+## ADR-14: Stronger Proc Glow and Out-of-Range Feedback
+
+**Date:** 2026-10-01  
+**Status:** Accepted
+
+**Context:** The original proc glow pulsed `Interface\Buttons\ButtonHilight-Square` to only 0.7 alpha on the icon, and the out-of-range cue was a red `ColorTexture` overlay pulsing 0.1–0.5 alpha on the **primary slot only**. Both were almost invisible in play. The proc-alert slot separately attempted the `ActionBarButtonSpellActivationAlert` template with a ticker fallback. The reference target is Blizzard's Cooldown Manager: a bright animated gold proc border and a clear red fade on out-of-range abilities across all tracked icons.
+
+**Decision:**
+- **Proc glow** — shared `ShowGlow`/`HideGlow` over a native Blizzard overlay created once by `EnsureNativeAlert`, anchored CENTER and sized to `ALERT_SCALE = 1.4×` the icon with an `OnSizeChanged` hook so it tracks `db.iconSize` live. Two native templates are tried (pcall-guarded, `hklAlertFailed` so we try once), recorded as `overlay.hklKind`:
+  - **`ActionButtonSpellAlertTemplate`** (preferred, `"flipbook"`) — the **modern** proc glow: a thick border with wisps continuously travelling around it, via `ProcStartFlipbook`/`ProcLoopFlipbook` textures driven by `FlipBook` animations. `ShowGlow` plays `ProcStartAnim` (intro) and the **looping `ProcLoop`** (the wisps); an `OnFinished` hook hides `ProcStartFlipbook` so only the loop remains. Both flipbook textures are `SetAllPoints`'d to the overlay in the size pass — they are `SetAtlas`'d to a fixed native size otherwise, which made the intro render as a small square inside the icon instead of scaling with it.
+  - **`ActionBarButtonSpellActivationAlert`** (fallback, `"classic"`) — the older activation alert with only `animIn`/`animOut` (a scale/fade-in, no travelling wisps).
+  - **self-drawn border** (`EnsureFallbackGlow`, last resort if neither template exists) — additive gold `UI-ActionButton-Border` at `GLOW_SCALE = 1.8×` pulsed by a looping `AnimationGroup`.
+
+  `hklGlowMode` (`"native"`/`"fallback"`) tells `HideGlow` which to tear down. Routed per design: glow on the **proc-alert slot when `showProcAlert` is enabled**, else on the **primary slot** (`UpdateGlowState` gates on `not db.showProcAlert`), so the effect never doubles up.
+
+  *Iteration note:* first self-drew `UI-ActionButton-Border` and tuned its size (fixed 8 px → 20 % per-edge → 1.8× centered) — never matched Blizzard because the ring geometry is baked for a fixed draw size. Then used the classic `ActionBarButtonSpellActivationAlert` template, but its animation is only a scale-in ("resize"), missing the travelling wisps. The modern `ActionButtonSpellAlertTemplate` + looping `ProcLoop` is the faithful match.
+- **Out-of-range** — `ApplyIconTint` desaturates the icon and tints it red (`SetVertexColor(1, 0.30, 0.30)`) when `IsActionInRange(entry.realSlotID) == false`, for **every slot** in the render loop, combined with the existing on-cooldown desaturation. The per-slot red overlay texture, its pulse ticker, and the primary-only range block were removed.
+
+**Rejected alternative:** `Interface\SpellActivationOverlay\IconAlert` (Blizzard's exact proc texture) needs precise TexCoord cropping that can't be verified without in-game iteration; `UI-ActionButton-Border` renders correctly full-frame.
+
+**Consequences:**
+- Proc glow and out-of-range are both far more visible and cover the whole strip.
+- Removed `glowTicker`, `alertGlowTicker`, `rangeTicker`, `lastRangeFailSlot`, the `slot.rangeOverlay`/`slot.glowOverlay`/`procAlertFrame.glowOverlay`/`spellOverlay` fields.
+- The glow texture (`UI-ActionButton-Border`, gold) is the one visual detail that may want tuning; swapping the texture string is a one-line change.

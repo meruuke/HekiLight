@@ -67,8 +67,8 @@ if GetLocale() == "ptBR" then
     L["Show the keybind for the suggested spell in the corner of the icon."]
         = "Exibe o atalho da magia sugerida no canto do ícone."
     L["Show out-of-range tint"] = "Exibir tinta fora de alcance"
-    L["Pulse the icon red when the suggested spell cannot reach your target."]
-        = "Pulsa o ícone em vermelho quando a magia sugerida não alcança o alvo."
+    L["Fade the icon to red when the suggested spell cannot reach your target."]
+        = "Esmaece o ícone em vermelho quando a magia sugerida não alcança o alvo."
     L["Spell Proc Glow"] = "Brilho de Proc"
     L["Pulse the icon border gold when the suggested spell has an active proc glow."]
         = "Pulsa a borda do ícone em dourado quando a magia sugerida tem um proc ativo."

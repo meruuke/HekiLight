@@ -26,7 +26,6 @@ local sessionLog      = {}
 local lastLogSuggID   = nil
 local lastSlotSpellID   = {}  -- [slotIndex] = last spellID logged for that slot (change-detect)
 local lastSkippedAlertID = nil  -- last currentAlertSpellID logged as SKIPPED (change-detect)
-local lastRangeFailSlot  = nil  -- last rslot that failed IsActionInRange pcall (change-detect)
 local lastOverrideLogID  = {}   -- [baseSpellID] = effectiveID last logged as OVERRIDE for secondary slots
 local lastRawSuggID      = nil  -- last spellID logged as RAW_SUGG (change-detect)
 
@@ -108,11 +107,8 @@ local elapsed     = 0
 -- once IsSpellAvailable returns true (the secret-number pcall trick ensures
 -- this only happens when the spell is truly off cooldown, not just off GCD).
 local recentlyCastSpells = {}
-local rangeTicker        -- C_Timer ticker for range overlay pulse animation
-local glowTicker         -- C_Timer ticker for proc-glow border pulse on primary slot
-local isGlowActive       = false
-local alertGlowTicker    -- C_Timer ticker for proc-glow border pulse on proc-alert slot
-local isAlertGlowActive  = false
+local isGlowActive       = false  -- primary-slot proc glow currently shown
+local isAlertGlowActive  = false  -- proc-alert slot glow currently shown
 local currentSuggestionID = nil  -- spellID currently displayed (used to filter glow events)
 local slots    = {}  -- per-slot tables; populated by BuildSlots(); slots[1] is the primary slot
 local MAX_SLOTS = 5  -- maximum number of icon slots (always created; extras hidden)
@@ -485,34 +481,9 @@ local function BuildSlots()
             slot.cooldownFrame:SetAllPoints(slot.frame)
             slot.cooldownFrame:SetDrawEdge(true)
             slot.cooldownFrame:SetHideCountdownNumbers(false)
-
-            -- Out-of-range red tint (primary slot only) — pulses so it's impossible to miss
-            local rangeOvl = slot.frame:CreateTexture(nil, "OVERLAY")
-            rangeOvl:SetAllPoints(slot.frame)
-            rangeOvl:SetColorTexture(1, 0, 0, 0.35)
-            rangeOvl:Hide()
-            rangeOvl:SetScript("OnShow", function()
-                local alpha, dir = 0.15, 1
-                rangeTicker = C_Timer.NewTicker(0.05, function()
-                    alpha = alpha + dir * 0.04
-                    if alpha >= 0.5 then dir = -1 elseif alpha <= 0.1 then dir = 1 end
-                    rangeOvl:SetAlpha(alpha)
-                end)
-            end)
-            rangeOvl:SetScript("OnHide", function()
-                if rangeTicker then rangeTicker:Cancel(); rangeTicker = nil end
-            end)
-            slot.rangeOverlay = rangeOvl
-
-            -- Proc-glow overlay: pulsing additive gold texture on the icon (primary slot only)
-            local glowOvl = slot.frame:CreateTexture(nil, "OVERLAY")
-            glowOvl:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
-            glowOvl:SetAllPoints(slot.frame)
-            glowOvl:SetBlendMode("ADD")
-            glowOvl:SetVertexColor(1, 0.85, 0)
-            glowOvl:SetAlpha(0)
-            slot.glowOverlay = glowOvl
         end
+        -- Out-of-range feedback is applied as an icon desaturate + red tint in Refresh
+        -- (all slots); the proc glow is a shared animated overlay via ShowGlow().
 
         -- Keybind label — all slots get one; style/anchor applied below via ApplyKeybindStyle()/ApplyKeybindAnchor()
         slot.keybindText = slot.frame:CreateFontString(nil, "OVERLAY")
@@ -551,12 +522,6 @@ local function BuildSlots()
     procAlertFrame.iconTexture = procAlertFrame:CreateTexture(nil, "ARTWORK")
     procAlertFrame.iconTexture:SetAllPoints(procAlertFrame)
     procAlertFrame.iconTexture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-    procAlertFrame.glowOverlay = procAlertFrame:CreateTexture(nil, "OVERLAY")
-    procAlertFrame.glowOverlay:SetTexture("Interface\\Buttons\\ButtonHilight-Square")
-    procAlertFrame.glowOverlay:SetAllPoints(procAlertFrame)
-    procAlertFrame.glowOverlay:SetBlendMode("ADD")
-    procAlertFrame.glowOverlay:SetVertexColor(1, 0.85, 0)
-    procAlertFrame.glowOverlay:SetAlpha(0)
     procAlertFrame.keybindText = procAlertFrame:CreateFontString(nil, "OVERLAY")
 
     -- Edit mode labels for the proc-alert slot
@@ -982,99 +947,176 @@ end
 
 -- ── Core Update Logic ─────────────────────────────────────────────────────────
 
--- ── Proc-Glow Border Pulse ────────────────────────────────────────────────────
+-- ── Proc-Glow: Blizzard's native spell-activation alert ──────────────────────
+-- Uses the game's own `ActionBarButtonSpellActivationAlert` frame template (the
+-- exact gold proc glow the action bars show, with its built-in animIn/animOut),
+-- anchored and sized to the host icon so it matches Blizzard and scales with
+-- db.iconSize. `ActionButton_ShowOverlayGlow` was removed in Midnight 12.0, but
+-- this template is still present. If it ever fails to create, we fall back to a
+-- self-drawn additive border so the proc is never left with no indicator.
+--
+-- Applied to whichever frame should signal a proc: the proc-alert slot when it is
+-- enabled, otherwise the primary slot. State is cached on the host frame.
 
-local function StopGlowPulse()
-    if glowTicker then glowTicker:Cancel(); glowTicker = nil end
-    isGlowActive = false
-    if slots[1] and slots[1].glowOverlay then
-        slots[1].glowOverlay:SetAlpha(0)
+local ALERT_SCALE = 1.4   -- native overlay size relative to the icon (Blizzard's ratio)
+local GLOW_SCALE  = 1.8   -- fallback border size relative to the icon
+
+-- Fallback only: a self-drawn gold border pulsed by a looping AnimationGroup.
+local function SizeFallbackGlow(g, frame)
+    local w, h = frame:GetWidth() or 32, frame:GetHeight() or 32
+    g:ClearAllPoints()
+    g:SetPoint("CENTER", frame, "CENTER", 0, 0)
+    g:SetSize(w * GLOW_SCALE, h * GLOW_SCALE)
+end
+
+local function EnsureFallbackGlow(frame)
+    if frame.hklGlow then return frame.hklGlow end
+    local g = CreateFrame("Frame", nil, frame)
+    g:SetFrameLevel(frame:GetFrameLevel() + 8)
+    local tex = g:CreateTexture(nil, "OVERLAY")
+    tex:SetAllPoints(g)
+    tex:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+    tex:SetBlendMode("ADD")
+    tex:SetVertexColor(1, 0.9, 0.3)
+    local ag = g:CreateAnimationGroup()
+    ag:SetLooping("REPEAT")
+    local a1 = ag:CreateAnimation("Alpha"); a1:SetOrder(1); a1:SetDuration(0.45); a1:SetFromAlpha(1.0); a1:SetToAlpha(0.35)
+    local a2 = ag:CreateAnimation("Alpha"); a2:SetOrder(2); a2:SetDuration(0.45); a2:SetFromAlpha(0.35); a2:SetToAlpha(1.0)
+    g.anim = ag
+    g:Hide()
+    frame.hklGlow = g
+    frame:HookScript("OnSizeChanged", function(self)
+        if self.hklGlow and self.hklGlow:IsShown() then SizeFallbackGlow(self.hklGlow, self) end
+    end)
+    return g
+end
+
+-- Create (once) and position the native proc-glow overlay on `frame`. Prefers the
+-- modern flipbook template (`ActionButtonSpellAlertTemplate` — the thick border with
+-- wisps continuously travelling around it, driven by a looping FlipBook ProcLoop
+-- animation), falling back to the classic activation-alert template. The overlay's
+-- `hklKind` records which one so play/stop drive the right animations. Returns the
+-- overlay or nil if neither template exists on this build.
+local function EnsureNativeAlert(frame)
+    if frame.hklAlert then return frame.hklAlert end
+    if frame.hklAlertFailed then return nil end
+
+    local overlay, kind
+    local ok, o = pcall(CreateFrame, "Frame", nil, frame, "ActionButtonSpellAlertTemplate")
+    if ok and o and (o.ProcLoop or o.ProcStartAnim) then
+        overlay, kind = o, "flipbook"
+    else
+        if o then o:Hide(); o:SetParent(nil) end
+        local ok2, o2 = pcall(CreateFrame, "Frame", nil, frame, "ActionBarButtonSpellActivationAlert")
+        if ok2 and o2 then overlay, kind = o2, "classic" end
     end
+    if not overlay then frame.hklAlertFailed = true; return nil end
+
+    overlay.hklKind = kind
+    frame.hklAlert  = overlay
+    -- The flipbook template's start anim leaves its texture on the last frame; hide it
+    -- when it finishes so only the looping wisps remain.
+    if kind == "flipbook" and overlay.ProcStartAnim and overlay.ProcStartFlipbook then
+        overlay.ProcStartAnim:HookScript("OnFinished", function() overlay.ProcStartFlipbook:Hide() end)
+    end
+    local function size(self)
+        local sz = (self:GetWidth() or 32) * ALERT_SCALE
+        overlay:SetSize(sz, sz)
+        overlay:ClearAllPoints()
+        overlay:SetPoint("CENTER", self, "CENTER", 0, 0)
+        -- The flipbook textures are SetAtlas'd to a fixed native size, so the start
+        -- flipbook renders as a small square inside the overlay. Pin both to fill the
+        -- overlay so the intro scales with the icon like the loop does.
+        if overlay.ProcStartFlipbook then overlay.ProcStartFlipbook:SetAllPoints(overlay) end
+        if overlay.ProcLoopFlipbook  then overlay.ProcLoopFlipbook:SetAllPoints(overlay) end
+    end
+    size(frame)
+    frame:HookScript("OnSizeChanged", size)  -- track db.iconSize live
+    return overlay
+end
+
+local function ShowGlow(frame)
+    if not frame then return end
+    local overlay = EnsureNativeAlert(frame)
+    if overlay then
+        frame.hklGlowMode = "native"
+        overlay:Show()
+        if overlay.hklKind == "flipbook" then
+            if overlay.ProcLoopFlipbook then overlay.ProcLoopFlipbook:Show() end
+            if overlay.ProcStartFlipbook then overlay.ProcStartFlipbook:Show() end
+            if overlay.ProcStartAnim then pcall(overlay.ProcStartAnim.Play, overlay.ProcStartAnim) end
+            if overlay.ProcLoop      then pcall(overlay.ProcLoop.Play, overlay.ProcLoop) end  -- continuous wisps
+        else  -- classic
+            if overlay.animOut and overlay.animOut:IsPlaying() then pcall(overlay.animOut.Stop, overlay.animOut) end
+            if overlay.animIn and not overlay.animIn:IsPlaying() then pcall(overlay.animIn.Play, overlay.animIn) end
+        end
+        return
+    end
+    -- Fallback: self-drawn border.
+    frame.hklGlowMode = "fallback"
+    local g = EnsureFallbackGlow(frame)
+    SizeFallbackGlow(g, frame)
+    g:Show()
+    if not g.anim:IsPlaying() then g.anim:Play() end
+end
+
+local function HideGlow(frame)
+    if not frame then return end
+    if frame.hklGlowMode == "native" and frame.hklAlert then
+        local overlay = frame.hklAlert
+        if overlay.hklKind == "flipbook" then
+            if overlay.ProcLoop      then pcall(overlay.ProcLoop.Stop, overlay.ProcLoop) end
+            if overlay.ProcStartAnim then pcall(overlay.ProcStartAnim.Stop, overlay.ProcStartAnim) end
+            overlay:Hide()
+        else
+            if overlay.animIn and overlay.animIn:IsPlaying() then pcall(overlay.animIn.Stop, overlay.animIn) end
+            if overlay.animOut then pcall(overlay.animOut.Play, overlay.animOut) else overlay:Hide() end
+        end
+        frame.hklGlowMode = nil
+        return
+    end
+    if frame.hklGlow then
+        if frame.hklGlow.anim:IsPlaying() then frame.hklGlow.anim:Stop() end
+        frame.hklGlow:Hide()
+    end
+end
+
+-- Primary-slot proc glow (used only when the proc-alert slot is disabled).
+local function StopGlowPulse()
+    isGlowActive = false
+    if slots[1] then HideGlow(slots[1].frame) end
 end
 
 local function StartGlowPulse()
     if isGlowActive then return end
     isGlowActive = true
-    local t, dir = 0, 1
-    glowTicker = C_Timer.NewTicker(0.05, function()
-        t = t + dir * 0.06
-        if t >= 1 then t = 1; dir = -1
-        elseif t <= 0 then t = 0; dir = 1 end
-        if slots[1] and slots[1].glowOverlay then
-            slots[1].glowOverlay:SetAlpha(t * 0.7)
-        end
-    end)
+    if slots[1] then ShowGlow(slots[1].frame) end
 end
 
+-- Glow on the primary slot only when the dedicated proc-alert slot is NOT enabled
+-- (per design: the proc glow lives on the proc slot if enabled, else the primary).
 local function UpdateGlowState(spellID)
-    if db.showProcGlow and C_SpellActivationOverlay.IsSpellOverlayed(spellID) then
+    if db.showProcGlow and not db.showProcAlert
+       and C_SpellActivationOverlay.IsSpellOverlayed(spellID) then
         StartGlowPulse()
     else
         StopGlowPulse()
     end
 end
 
+-- Proc-alert slot glow (the extra icon shown for off-rotation procs).
 local function StopAlertGlowPulse()
     if not isAlertGlowActive then return end  -- nothing to stop; skip log noise
     DLog("ALERT_GLOW", "stopped")
-    if alertGlowTicker then alertGlowTicker:Cancel(); alertGlowTicker = nil end
     isAlertGlowActive = false
-    if not procAlertFrame then return end
-    -- Stop ActionBarButtonSpellActivationAlert overlay if it was created
-    if procAlertFrame.spellOverlay then
-        local ov = procAlertFrame.spellOverlay
-        if ov.animIn and ov.animIn:IsPlaying() then pcall(ov.animIn.Stop, ov.animIn) end
-        if ov.animOut then pcall(ov.animOut.Play, ov.animOut) end
-    end
-    -- Reset fallback texture and border
-    if procAlertFrame.glowOverlay then procAlertFrame.glowOverlay:SetAlpha(0) end
-    procAlertFrame:SetBackdropBorderColor(0.3, 0.3, 0.3, 1)
+    HideGlow(procAlertFrame)
 end
 
 local function StartAlertGlowPulse()
     if isAlertGlowActive then return end
     isAlertGlowActive = true
-    if not procAlertFrame then return end
-
-    -- Attempt 1: ActionBarButtonSpellActivationAlert frame template (same XML the action bar uses).
-    -- ActionButton_ShowOverlayGlow was removed in Midnight 12.0 but the template may still exist.
-    if not procAlertFrame.spellOverlay then
-        local ok, overlay = pcall(CreateFrame, "Frame", nil, procAlertFrame, "ActionBarButtonSpellActivationAlert")
-        if ok and overlay then
-            local sz = procAlertFrame:GetWidth() * 1.4
-            overlay:SetSize(sz, sz)
-            overlay:SetPoint("CENTER")
-            procAlertFrame.spellOverlay = overlay
-        end
-    end
-    if procAlertFrame.spellOverlay then
-        local ov = procAlertFrame.spellOverlay
-        if ov.animOut and ov.animOut:IsPlaying() then pcall(ov.animOut.Stop, ov.animOut) end
-        if ov.animIn then
-            local ok = pcall(ov.animIn.Play, ov.animIn)
-            if ok then
-                DLog("ALERT_GLOW", "started: ActionBarButtonSpellActivationAlert template")
-                return
-            end
-        end
-    end
-
-    -- Fallback: aggressive ButtonHilight pulse + backdrop border color flash.
-    -- Much more visible than the previous subtle ticker: full alpha, fast cycle, gold border.
-    DLog("ALERT_GLOW", "started: fallback ticker (template unavailable)")
-    local t, dir = 0, 1
-    alertGlowTicker = C_Timer.NewTicker(0.033, function()  -- ~30fps
-        t = t + dir * 0.15
-        if t >= 1 then t = 1; dir = -1
-        elseif t <= 0 then t = 0; dir = 1 end
-        if procAlertFrame then
-            if procAlertFrame.glowOverlay then
-                procAlertFrame.glowOverlay:SetAlpha(t)  -- full 1.0 alpha
-            end
-            -- Border flashes gold → bright white and back
-            procAlertFrame:SetBackdropBorderColor(1, 0.82 + t * 0.18, t, 1)
-        end
-    end)
+    DLog("ALERT_GLOW", "started")
+    ShowGlow(procAlertFrame)
 end
 
 -- Show or hide the proc-alert icon (the extra frame to the LEFT of display).
@@ -1149,6 +1191,23 @@ local function UpdateProcAlert(primarySpellID)
     procAlertFrame:Hide()
 end
 
+-- Applies the per-slot icon tint: desaturated + red when the spell is out of range
+-- (Blizzard's Cooldown Manager look), combined with the on-cooldown desaturation for
+-- secondary slots. Range is checked on the slot's own realSlotID so every slot — not
+-- just the primary — fades to red when the target is out of reach.
+local function ApplyIconTint(slot, i, entry)
+    local outOfRange = false
+    if db.showOutOfRange and entry.realSlotID then
+        local ok, inRange = pcall(C_ActionBar.IsActionInRange, entry.realSlotID)
+        if ok and inRange == false then outOfRange = true end
+    end
+    slot.iconTexture:SetDesaturated(outOfRange or (i > 1 and entry.onCooldown))
+    if outOfRange then
+        slot.iconTexture:SetVertexColor(1.0, 0.30, 0.30)
+    else
+        slot.iconTexture:SetVertexColor(1, 1, 1)
+    end
+end
 
 Refresh = function()
     if #slots == 0 then return end  -- BuildSlots not yet called
@@ -1237,7 +1296,7 @@ Refresh = function()
                     lastSlotSpellID[i] = entry.spellID
                 end
                 slot.iconTexture:SetTexture(si.iconID)
-                slot.iconTexture:SetDesaturated(i > 1 and entry.onCooldown)
+                ApplyIconTint(slot, i, entry)
                 slot.frame:Show()
                 if db.showKeybind and slot.keybindText then
                     -- Two-stage lookup: prefer realSlotID direct binding, fall back to
@@ -1270,6 +1329,7 @@ Refresh = function()
                     lastSlotSpellID[i] = nil
                 end
                 slot.iconTexture:SetDesaturated(false)
+                slot.iconTexture:SetVertexColor(1, 1, 1)
                 slot.frame:Hide()
                 if slot.keybindText then slot.keybindText:Hide() end
             end
@@ -1279,6 +1339,7 @@ Refresh = function()
                 lastSlotSpellID[i] = nil
             end
             slot.iconTexture:SetDesaturated(false)
+            slot.iconTexture:SetVertexColor(1, 1, 1)
             slot.frame:Hide()
             if slot.keybindText then slot.keybindText:Hide() end
         end
@@ -1320,21 +1381,8 @@ Refresh = function()
         s1.cooldownFrame:Hide()
     end
 
-    -- Range indicator — requires a real action bar slot; hide if none found
-    if db.showOutOfRange and rslot and s1.rangeOverlay then
-        local okR, inRange = pcall(C_ActionBar.IsActionInRange, rslot)
-        if not okR then
-            if rslot ~= lastRangeFailSlot then
-                DLog("SLOT", string.format("IsActionInRange pcall failed for slot %d", rslot))
-                lastRangeFailSlot = rslot
-            end
-            inRange = nil
-        end
-        -- inRange: true = in range, false = out of range, nil = no range requirement
-        s1.rangeOverlay:SetShown(inRange == false)
-    elseif s1.rangeOverlay then
-        s1.rangeOverlay:Hide()
-    end
+    -- Out-of-range feedback is applied per-slot in the render loop above
+    -- (ApplyIconTint), so the display reaches every suggestion, not just slot 1.
 
     display:Show()
     Log("display:Show() — numSuggestions:", db.numSuggestions,
@@ -1384,9 +1432,9 @@ EditModeRender = function()
                 s.iconTexture:SetTexture(PLACEHOLDER_ICON)
             end
             s.iconTexture:SetDesaturated(false)
+            s.iconTexture:SetVertexColor(1, 1, 1)
             if s.editLabel   then s.editLabel:Show() end
             if s.keybindText then s.keybindText:Hide() end
-            if s.rangeOverlay then s.rangeOverlay:Hide() end
         end
     end
     -- Hide slots beyond numSuggestions
@@ -1784,7 +1832,7 @@ SlashCmdList["HEKILIGHT"] = function(msg)
 
     elseif msg == "range off" then
         db.showOutOfRange = false
-        if slots[1] and slots[1].rangeOverlay then slots[1].rangeOverlay:Hide() end
+        Refresh()  -- re-render so the red tint clears from all slots immediately
         print("|cff88ccffHekiLight:|r " .. L["Out-of-range tint disabled."])
 
     elseif msg == "procglow on" then

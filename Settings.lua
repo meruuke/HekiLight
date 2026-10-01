@@ -239,9 +239,9 @@ function BuildSettingsPanel()
         function() return db.showKeybind end,
         function(v) db.showKeybind = v; if not v then for i = 1, MAX_SLOTS do if slots[i] and slots[i].keybindText then slots[i].keybindText:Hide() end end end end)
     CB(dispBody, cur, L["Show out-of-range tint"],
-        L["Pulse the icon red when the suggested spell cannot reach your target."],
+        L["Fade the icon to red when the suggested spell cannot reach your target."],
         function() return db.showOutOfRange end,
-        function(v) db.showOutOfRange = v; if not v and slots[1] and slots[1].rangeOverlay then slots[1].rangeOverlay:Hide() end end)
+        function(v) db.showOutOfRange = v; Refresh() end)
     CB(dispBody, cur, L["Spell Proc Glow"],
         L["Pulse the icon border gold when the suggested spell has an active proc glow."],
         function() return db.showProcGlow end,
