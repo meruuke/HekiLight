@@ -50,7 +50,6 @@ Enable it in **Interface → Combat → Rotation Assistant**, then let HekiLight
 | `/hkl keybind on\|off` | Toggle keybind text |
 | `/hkl range on\|off` | Toggle out-of-range tint |
 | `/hkl procglow on\|off` | Toggle proc glow |
-| `/hkl sounds on\|off` | Toggle combat-entry sound |
 | `/hkl minimap on\|off` | Toggle minimap button |
 | `/hkl hide dead on\|off` | Toggle hide when dead |
 | `/hkl hide cinematic on\|off` | Toggle hide during cinematics |
