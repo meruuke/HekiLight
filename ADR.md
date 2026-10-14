@@ -88,7 +88,7 @@ Both paths are pcall-guarded.
 
 **Consequences:**
 - Zero false-positives from GCD: the secret-number pcall only returns `available = true` when `duration` is a plain `0`, which only happens when truly off cooldown.
-- `recentlyCastSpells` table tracks only real-CD spells, keeping it small.
+- **Amended by ADR-13:** the `duration == 0` test was widened to `duration < 1.55` so the GCD (a plain ~1.5 s number) reads as available while only real cooldowns (secret numbers) throw. The old cast-tracking table `recentlyCastSpells` and its `UNIT_SPELLCAST_SUCCEEDED` handler were removed — cooldown state is now read live.
 
 ---
 
@@ -210,3 +210,24 @@ The `ignoredSpells` list is inherently class-specific: a spell ignored on a Warl
 - Log survives `/reload` and WoW crashes that flush SavedVariables.
 - `table.remove(t, 1)` is O(n) — at 500 entries this is negligible but would degrade if `MAX_LOG` were significantly increased; a circular index would be O(1).
 - Change-detection guards (`lastLogSuggID`, `lastSlotSpellID`, `lastSkippedAlertID`) prevent high-frequency events from flooding the buffer.
+
+---
+
+## ADR-13: Availability-Based Cooldown Greying with GCD Window
+
+**Date:** 2026-09-30  
+**Status:** Accepted (amends ADR-5)
+
+**Context:** `IsSpellOnCooldown` originally returned `true` only for spells present in `recentlyCastSpells` — i.e. spells the addon had *witnessed the player cast* (`UNIT_SPELLCAST_SUCCEEDED`, base CD > 1500 ms). This missed every cooldown the addon never observed: abilities used before combat/before the poll loop started, proc-triggered cooldowns, and anything cast while the addon was reloaded mid-fight. Those spells fell into pass 1 of `GetSuggestionQueue` and rendered at full brightness. Observed live on Aug Evoker: the secondary strip showed on-cooldown spells (including a major winged-dragon cooldown) never greying — captured on video 2026-09-30.
+
+**Decision:** `IsSpellOnCooldown(sid)` (gated on base CD > 1500 ms) reads the live cooldown directly: `not (IsSpellAvailable(sid) or HasChargeReady(sid))`. The key is that `IsSpellAvailable` is now **GCD-aware** — it treats `C_Spell.GetSpellCooldown.duration < 1.55 s` as available, not just `== 0`. Per ADR-5, Blizzard returns a **plain ~1.5 s number for the GCD** but a **secret number for a real cooldown**; so an off-CD spell sitting on the GCD reads as available (duration ~1.5 < 1.55), while a spell on its real CD makes the `<` comparison throw under taint → pcall catches it → unavailable. `HasChargeReady` (pcall-guarded `C_Spell.GetSpellCharges`) keeps charge-based spells with a banked charge from greying.
+
+**Rejected alternative:** a `gcdUntil` window refreshed from `GetHaste()` on `UNIT_SPELLCAST_SUCCEEDED`. In combat, under addon-tainted execution, `GetHaste()` returns a **secret number** and any arithmetic on it throws (`attempt to perform arithmetic on ... a secret number value`). The GCD-aware duration check needs no haste, no time window, and no cast tracking — so `recentlyCastSpells` and the `UNIT_SPELLCAST_SUCCEEDED` handler were removed entirely.
+
+**Consequences:**
+- Secondary slots grey for *any* on-cooldown real-CD spell, not just witnessed casts — the reported bug is fixed, with no per-cast state to maintain.
+- Also tightens the proc-alert gate (`UpdateProcAlert` uses `IsSpellOnCooldown`): a real-CD proc on cooldown is now correctly suppressed (consistent with the intent of stories 9.2/9.3).
+- Out of combat, real cooldowns return plain numbers, so a real-CD spell with < 1.55 s remaining briefly reads as available. Harmless — greying is a combat feature and the poll loop is combat-gated.
+- Primary slot (slot 1) still never desaturates by design (`i > 1 and entry.onCooldown`, render loop) — a separate decision if that should change.
+
+**Follow-up (same day):** the check must run on the **override** spellID, not the base ID `GetRotationSpells()` returns. Evoker empower spells with Font of Magic (Fire Breath `357208` → `382266`, Eternity Surge `359073` → `382411`) track their cooldown on the override, so `IsSpellOnCooldown(sid)` never saw the CD and those spells never greyed. `GetSuggestionQueue` now calls `IsSpellOnCooldown(effectiveID)` (from `resolveSecondary`, the same source ADR-9 uses for icons/dedup). Added a `CDCHECK` DLog tag (change-detected) to confirm the resolved ID and cooldown state in-game.

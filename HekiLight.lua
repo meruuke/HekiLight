@@ -28,6 +28,7 @@ local lastSlotSpellID   = {}  -- [slotIndex] = last spellID logged for that slot
 local lastSkippedAlertID = nil  -- last currentAlertSpellID logged as SKIPPED (change-detect)
 local lastRangeFailSlot  = nil  -- last rslot that failed IsActionInRange pcall (change-detect)
 local lastOverrideLogID  = {}   -- [baseSpellID] = effectiveID last logged as OVERRIDE for secondary slots
+local lastCDLog          = {}   -- [baseSpellID] = "eff:onCD" last logged as CDCHECK (change-detect)
 local lastRawSuggID      = nil  -- last spellID logged as RAW_SUGG (change-detect)
 
 -- Session event recorder — logs significant state changes (not every tick) to
@@ -102,12 +103,6 @@ local dbChar        -- points at HekiLightDBChar after ADDON_LOADED (per-charact
 local inCombat    = false
 local inCinematic = false
 local elapsed     = 0
--- Spells with a real cooldown (base CD > 1.5 s) that the player has cast.
--- Used to grey secondary icons while the spell is on its real CD.
--- Populated by UNIT_SPELLCAST_SUCCEEDED; entries cleared by IsSpellOnCooldown
--- once IsSpellAvailable returns true (the secret-number pcall trick ensures
--- this only happens when the spell is truly off cooldown, not just off GCD).
-local recentlyCastSpells = {}
 local rangeTicker        -- C_Timer ticker for range overlay pulse animation
 local glowTicker         -- C_Timer ticker for proc-glow border pulse on primary slot
 local isGlowActive       = false
@@ -722,36 +717,54 @@ end
 
 -- ── Spell Suggestion Detection ───────────────────────────────────────────────
 
--- Returns true if spellID can be cast right now (off cooldown / has a charge).
--- Uses the secret-number pcall trick on C_Spell.GetSpellCooldown:
---   • duration == 0 (off CD / has a charge) → plain 0 → comparison succeeds → true
---   • duration > 0 (on CD / no charges left) → secret value → comparison throws
---     → pcall catches the error → returns false
+-- Returns true if spellID is off its *real* cooldown — the GCD does not count as
+-- on cooldown. Reads C_Spell.GetSpellCooldown.duration inside a pcall:
+--   • duration == 0             → off cooldown entirely                → true
+--   • duration is a plain ~1.5  → merely the GCD (Blizzard returns a real number
+--                                  for the GCD, never a secret one)     → true
+--   • duration is a secret      → real cooldown; the < comparison throws under
+--     number (real CD)            combat taint, pcall catches it        → false
+-- The 1.55 s ceiling covers the 1.5 s base GCD (hasted GCDs are shorter). This
+-- replaces reading the tainted GCD/haste values in combat, which return secret
+-- numbers that throw on any arithmetic.
 local function IsSpellAvailable(spellID)
     local available = false
     pcall(function()
         local cd = C_Spell.GetSpellCooldown(spellID)
-        if cd and cd.duration == 0 then
+        if cd and cd.duration < 1.55 then
             available = true
         end
     end)
     return available
 end
 
--- Returns true when spellID has been cast and is still on its real cooldown.
--- Only spells with GetSpellBaseCooldown > 1500 ms are ever tracked (filters
--- out GCD-only spells). IsSpellAvailable uses the secret-number pcall trick —
--- it returns true only when duration is plain 0, which means truly off CD
--- (not just off GCD), so no grace period is needed.
-local function IsSpellOnCooldown(sid)
-    if not recentlyCastSpells[sid] then return false end
-    if IsSpellAvailable(sid) then
-        recentlyCastSpells[sid] = nil
-        return false
-    end
-    return true
+-- Returns true if spellID has at least one charge ready right now. Charge-based
+-- spells report a recharge cooldown (duration > 0) even while a charge is banked,
+-- so IsSpellAvailable alone would wrongly flag them as on cooldown. pcall-guarded:
+-- a secret/tainted charge count in combat throws on comparison and falls through
+-- to false (treated as no charge ready).
+local function HasChargeReady(spellID)
+    local ready = false
+    pcall(function()
+        local ci = C_Spell.GetSpellCharges(spellID)
+        if ci and ci.currentCharges and ci.currentCharges > 0 then
+            ready = true
+        end
+    end)
+    return ready
 end
 
+-- Returns true when spellID is on its real cooldown (not merely the GCD).
+-- Only spells with GetSpellBaseCooldown > 1500 ms qualify (filters out GCD-only
+-- spells). A spell is NOT on cooldown when it is off its real CD (IsSpellAvailable,
+-- which is GCD-aware) or has a banked charge (HasChargeReady). Because the check
+-- reads the live cooldown, it greys any on-cooldown spell regardless of whether the
+-- addon witnessed the cast — pre-combat, proc-triggered, and reload-mid-fight
+-- cooldowns all grey correctly, while the GCD never does.
+local function IsSpellOnCooldown(sid)
+    if (GetSpellBaseCooldown(sid) or 0) <= 1500 then return false end
+    return not (IsSpellAvailable(sid) or HasChargeReady(sid))
+end
 
 local function IsAssistActive()
     return C_ActionBar.HasAssistedCombatActionButtons()
@@ -943,9 +956,19 @@ local function GetSuggestionQueue(n)
                 if queueCount >= n then break end
                 if not dbChar.ignoredSpells[sid] and IsPlayerSpell(sid) then
                     local rslot, effectiveID = resolveSecondary(sid)
+                    -- Cooldown is tracked on the *effective* (cast) spell, not the base ID
+                    -- GetRotationSpells returns. Empower spells with Font of Magic (e.g. Fire
+                    -- Breath 357208 → 382266) keep their CD on the override, so checking the
+                    -- base ID here would never see the cooldown and the spell would never grey.
+                    local onCD = IsSpellOnCooldown(effectiveID)
+                    local cdKey = effectiveID .. ":" .. tostring(onCD)
+                    if lastCDLog[sid] ~= cdKey then
+                        DLog("CDCHECK", string.format("sid=%d eff=%d baseCD=%dms onCD=%s",
+                            sid, effectiveID, GetSpellBaseCooldown(effectiveID) or 0, tostring(onCD)))
+                        lastCDLog[sid] = cdKey
+                    end
                     -- Dedup against primaryID using the effective (cast) ID, not the base ID.
-                    -- GetRotationSpells returns base IDs; primaryID is an override ID.
-                    if effectiveID ~= primaryID and not IsSpellOnCooldown(sid) and rslot and IsUsableAction(rslot) then
+                    if effectiveID ~= primaryID and not onCD and rslot and IsUsableAction(rslot) then
                         if effectiveID ~= sid and lastOverrideLogID[sid] ~= effectiveID then
                             DLog("OVERRIDE", string.format("secondary spellID %d → %d via slot %d", sid, effectiveID, rslot))
                             lastOverrideLogID[sid] = effectiveID
@@ -964,7 +987,7 @@ local function GetSuggestionQueue(n)
                     if queueCount >= n then break end
                     if not dbChar.ignoredSpells[sid] and IsPlayerSpell(sid) then
                         local rslot, effectiveID = resolveSecondary(sid)
-                        if effectiveID ~= primaryID and IsSpellOnCooldown(sid) and rslot and IsUsableAction(rslot) then
+                        if effectiveID ~= primaryID and IsSpellOnCooldown(effectiveID) and rslot and IsUsableAction(rslot) then
                             queueCount = queueCount + 1
                             queueCache[queueCount].spellID        = sid
                             queueCache[queueCount].realSlotID     = rslot
@@ -1165,6 +1188,7 @@ Refresh = function()
         lastRawSuggID = nil
         lastSkippedAlertID = nil
         wipe(lastOverrideLogID)
+        wipe(lastCDLog)
         StopGlowPulse()
         StopAlertGlowPulse()
         currentAlertSpellID = nil
@@ -1464,7 +1488,6 @@ events:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 events:RegisterEvent("ACTIONBAR_UPDATE_STATE")  -- fires when Rotation Assistant changes highlight
 events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_SHOW")  -- proc glow appears
 events:RegisterEvent("SPELL_ACTIVATION_OVERLAY_GLOW_HIDE")  -- proc glow fades
-events:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")             -- track real-CD casts for grey filter
 events:RegisterEvent("UNIT_FLAGS")
 events:RegisterEvent("UNIT_HEALTH")
 events:RegisterEvent("UNIT_ENTERED_VEHICLE")
@@ -1544,7 +1567,6 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         inCombat = false
         lastRawSuggID = nil
         StopPollLoop()
-        wipe(recentlyCastSpells)
         Refresh()
         Log("Left combat")
 
@@ -1594,18 +1616,6 @@ events:SetScript("OnEvent", function(_, event, arg1, arg2, arg3)
         end
         if inCombat or db.showMode == "always" then
             UpdateProcAlert(currentSuggestionID)
-        end
-
-    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-        -- arg1 = unit, arg2 = castGUID, arg3 = spellID
-        -- Track spells with a real cooldown (base CD > 1.5 s) so secondary
-        -- icons can be greyed while they are on cooldown.
-        -- GetSpellBaseCooldown returns base CD in ms as a plain Lua number.
-        if arg1 == "player" and arg3 then
-            local baseCDms = GetSpellBaseCooldown(arg3) or 0
-            if baseCDms > 1500 then
-                recentlyCastSpells[arg3] = true
-            end
         end
 
     elseif event == "CINEMATIC_START" or event == "PLAY_MOVIE" then
