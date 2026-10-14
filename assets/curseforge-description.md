@@ -10,12 +10,12 @@ Enable it in **Interface → Combat → Rotation Assistant**, then let HekiLight
 
 - 🎯 Shows up to **5 spell icons** from the rotation queue (default: 3, configurable)
 - 🥇 First icon is always the **currently highlighted suggestion** — the spell to cast right now
-- 🚫 Secondary slots automatically hide spells that are on cooldown
+- 🚫 Secondary slots **grey out** spells that are on cooldown
 - 🙈 **Ignore list** — permanently hide specific spells from the secondary slots via the settings panel or `/hkl ignore`
 - ⌨️ Displays the **keybind** for the primary spell (just like Hekili did)
-- ⏱️ **Cooldown spiral** overlay on the primary icon
-- 🔴 **Pulsing out-of-range tint** when the suggested spell can't reach your target
-- ✨ **Proc-glow border** — pulses gold when the suggested spell has an active proc
+- 🔴 **Out-of-range fade** — icons desaturate and tint red on **every slot** when the spell can't reach your target, updating live as you move (just like Blizzard's Cooldown Manager)
+- ✨ **Proc glow** — Blizzard's **native proc glow** (a gold border with travelling wisps) lights up the suggested spell the moment it procs
+- 🔔 **Proc-alert icon** — an extra icon for an active proc that isn't your main suggestion, so you never miss a free cast
 - 📐 **Movable and scalable** — drag to reposition when unlocked
 - 💾 Position and all settings **persist across sessions**
 - 🗺️ **Draggable minimap button** — click to open the settings panel
@@ -82,4 +82,4 @@ Thank you to the Hekili team for years of excellent work. This addon exists beca
 
 ## Bugs & Feedback
 
-Please report issues and suggestions on the [GitHub Issues page](https://github.com/mauro-pinheiro/HekiLight/issues).
+Please report issues and suggestions on the [GitHub Issues page](https://github.com/meruuke/HekiLight/issues).
