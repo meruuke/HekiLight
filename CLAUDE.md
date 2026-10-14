@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this addon does
 
-HekiLight is a World of Warcraft addon (Lua + TOC) for **Midnight 12.0+** (`## Interface: 120005`). It reads Blizzard's built-in **Rotation Assistant** and re-displays the suggested spell as a movable, skinnable icon overlay.
+HekiLight is a World of Warcraft addon (Lua + TOC) for **Midnight 12.0+** (`## Interface: 120105`). It reads Blizzard's built-in **Rotation Assistant** and re-displays the suggested spell as a movable, skinnable icon overlay.
 
 There is **no build system, no package manager, no test suite, and no linter**. "Running" the addon means loading it inside WoW. Reload with `/reload` in-game after changing any Lua file.
 
