@@ -67,8 +67,8 @@ if GetLocale() == "ptBR" then
     L["Show the keybind for the suggested spell in the corner of the icon."]
         = "Exibe o atalho da magia sugerida no canto do ícone."
     L["Show out-of-range tint"] = "Exibir tinta fora de alcance"
-    L["Pulse the icon red when the suggested spell cannot reach your target."]
-        = "Pulsa o ícone em vermelho quando a magia sugerida não alcança o alvo."
+    L["Fade the icon to red when the suggested spell cannot reach your target."]
+        = "Esmaece o ícone em vermelho quando a magia sugerida não alcança o alvo."
     L["Spell Proc Glow"] = "Brilho de Proc"
     L["Pulse the icon border gold when the suggested spell has an active proc glow."]
         = "Pulsa a borda do ícone em dourado quando a magia sugerida tem um proc ativo."
@@ -78,11 +78,6 @@ if GetLocale() == "ptBR" then
     L["Lock proc-alert to main display"] = "Travar proc ao painel principal"
     L["When checked, the proc icon moves with the main suggestion row. Uncheck to drag it independently."]
         = "Quando marcado, o ícone de proc se move com a fila principal. Desmarque para arrastá-lo independentemente."
-    L["Show cooldown spiral"] = "Exibir espiral de recarga"
-    L["Display a cooldown sweep on the icon."] = "Exibe o tempo de recarga no ícone."
-    L["Play sounds"] = "Reproduzir sons"
-    L["Play a subtle click when the icon appears as you enter combat."]
-        = "Toca um clique sutil quando o ícone aparece ao entrar em combate."
     L["Show minimap button"] = "Exibir botão do minimapa"
     L["Show the HekiLight button on the minimap. Drag it to reposition."]
         = "Exibe o botão do HekiLight no minimapa. Arraste para reposicioná-lo."
@@ -186,8 +181,6 @@ if GetLocale() == "ptBR" then
     L["Out-of-range tint disabled."]    = "Tinta fora de alcance desativada."
     L["Proc glow border enabled."]      = "Borda de proc ativada."
     L["Proc glow border disabled."]     = "Borda de proc desativada."
-    L["Sounds enabled."]                = "Sons ativados."
-    L["Sounds disabled."]              = "Sons desativados."
     L["kbsize must be between 8 and 24."] = "kbsize deve estar entre 8 e 24."
     L["Keybind color set."]             = "Cor do atalho definida."
     L["Usage: /hkl kbcolor <r> <g> <b>  (values 0–1, e.g. 1 0.82 0 for yellow)"]

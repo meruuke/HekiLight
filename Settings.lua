@@ -239,13 +239,13 @@ function BuildSettingsPanel()
         function() return db.showKeybind end,
         function(v) db.showKeybind = v; if not v then for i = 1, MAX_SLOTS do if slots[i] and slots[i].keybindText then slots[i].keybindText:Hide() end end end end)
     CB(dispBody, cur, L["Show out-of-range tint"],
-        L["Pulse the icon red when the suggested spell cannot reach your target."],
+        L["Fade the icon to red when the suggested spell cannot reach your target."],
         function() return db.showOutOfRange end,
-        function(v) db.showOutOfRange = v; if not v and slots[1] and slots[1].rangeOverlay then slots[1].rangeOverlay:Hide() end end)
+        function(v) db.showOutOfRange = v; Refresh() end)
     CB(dispBody, cur, L["Spell Proc Glow"],
         L["Pulse the icon border gold when the suggested spell has an active proc glow."],
         function() return db.showProcGlow end,
-        function(v) db.showProcGlow = v; if not v then StopGlowPulse() end end)
+        function(v) db.showProcGlow = v; if not v then StopGlowPulse() end; Refresh() end)
     CB(dispBody, cur, L["Show proc-alert icon"],
         L["Show an extra icon to the left when a proc spell is active but not the main suggestion."],
         function() return db.showProcAlert end,
@@ -266,14 +266,6 @@ function BuildSettingsPanel()
             ApplyProcAlertLayout()
             if isEditMode() then EditModeRender() end  -- update lock indicator in edit mode
         end)
-    CB(dispBody, cur, L["Show cooldown spiral"],
-        L["Display a cooldown sweep on the icon."],
-        function() return db.showCooldown end,
-        function(v) db.showCooldown = v; if not v and slots[1] and slots[1].cooldownFrame then slots[1].cooldownFrame:Hide() end end)
-    CB(dispBody, cur, L["Play sounds"],
-        L["Play a subtle click when the icon appears as you enter combat."],
-        function() return db.sounds end,
-        function(v) db.sounds = v end)
     CB(dispBody, cur, L["Show minimap button"],
         L["Show the HekiLight button on the minimap. Drag it to reposition."],
         function() return db.minimapShow ~= false end,

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this addon does
 
-HekiLight is a World of Warcraft addon (Lua + TOC) for **Midnight 12.0+** (`## Interface: 120005`). It reads Blizzard's built-in **Rotation Assistant** and re-displays the suggested spell as a movable, skinnable icon overlay.
+HekiLight is a World of Warcraft addon (Lua + TOC) for **Midnight 12.0+** (`## Interface: 120105`). It reads Blizzard's built-in **Rotation Assistant** and re-displays the suggested spell as a movable, skinnable icon overlay.
 
 There is **no build system, no package manager, no test suite, and no linter**. "Running" the addon means loading it inside WoW. Reload with `/reload` in-game after changing any Lua file.
 
@@ -60,7 +60,7 @@ local L  = HekiLightST.L
 
 ## Core polling loop
 
-`StartPollLoop()` sets an `OnUpdate` script on `display` that fires `Refresh()` every `db.pollRate` seconds (default 0.05 s). `StopPollLoop()` clears it. The loop runs only when Rotation Assistant is active and the player is in combat (or `showMode == "always"`).
+`StartPollLoop()` sets an `OnUpdate` script on `display` that fires `Refresh()` every `db.pollRate` seconds (default 0.05 s). `StopPollLoop()` clears it. The loop runs while in combat, and also keeps running out of combat whenever the display stays visible (`PLAYER_REGEN_ENABLED` re-starts it if `display:IsShown()`) so movement-driven updates like the out-of-range tint don't freeze. `OnUpdate` only fires while the frame is shown, so it's free while hidden.
 
 `IsAssistActive()` — gates loop start: returns true if `HasAssistedCombatActionButtons()` OR `GetCVarBool("assistedCombatHighlight")`.
 
@@ -95,6 +95,8 @@ Returns `spellID, realSlotID`:
 - **`GetSpellBaseCooldown`** (not `GetSpellCooldown`) identifies real CDs (>1500 ms) vs GCD for the secondary-slot grey filter
 - **Settings panels**: `Settings.RegisterCanvasLayoutCategory` / `RegisterCanvasLayoutSubcategory`; sliders built manually with `BackdropTemplate` (`OptionsSliderTemplate` is deprecated in 12.0)
 - **Proc-glow**: tracked via `SPELL_ACTIVATION_OVERLAY_GLOW_SHOW/HIDE` events into `activeOverlaySpells`; also cross-checked with `C_SpellActivationOverlay.IsSpellOverlayed()` at render time to catch procs already active on `/reload`
+- **Proc-glow rendering**: shared `ShowGlow(frame)`/`HideGlow(frame)` over a native overlay (`EnsureNativeAlert`, pcall-guarded, cached `frame.hklAlert`, sized `ALERT_SCALE = 1.4×` the icon, CENTER-anchored, `OnSizeChanged` hook for live `iconSize`). Prefers the **modern `ActionButtonSpellAlertTemplate`** (`overlay.hklKind = "flipbook"`) and plays its looping `ProcLoop` FlipBook for the travelling-wisp glow Blizzard's Cooldown Manager uses; falls back to the classic `ActionBarButtonSpellActivationAlert` (`animIn`/`animOut`, scale-in only), then to a self-drawn `UI-ActionButton-Border` `AnimationGroup` glow (`frame.hklGlow`). `frame.hklGlowMode` (`"native"`/`"fallback"`) tells `HideGlow` which to tear down. `db.showProcGlow` is the master on/off for the glow on **either** slot: `UpdateGlowState` gates the primary glow (`db.showProcGlow and not db.showProcAlert`), and `UpdateProcAlert` gates the proc-alert glow on `db.showProcGlow` (the proc-alert *icon* still shows — `showProcAlert` controls the icon, `showProcGlow` the glow). Routed per design: the glow lives on the **proc-alert slot when `showProcAlert` is enabled**, otherwise on the **primary slot**
+- **Out-of-range**: `ApplyRangeTint(iconTexture, realSlot, extraDesat)` desaturates and red-tints (`SetVertexColor(1, 0.30, 0.30)`) when `IsActionInRange(realSlot) == false`. The suggestion slots call it via `ApplyIconTint(slot, i, entry)` (every slot, combined with on-cooldown desaturation) in the render loop; the proc-alert slot calls it directly in `UpdateProcAlert` (`GetRealSlot(alertSpellID)`), so the proc icon fades to red **even while glowing**. Updates track player movement because the poll keeps running while the display is visible out of combat (`PLAYER_REGEN_ENABLED` restarts `StartPollLoop` if `display:IsShown()`), not only on suggestion changes
 - **Minimap button**: 80 px radius from `Minimap:GetCenter()` at `db.minimapAngle` degrees; drag recalculates angle with `math.atan2`
 - **Locale**: `local L = HekiLightLocale`; identity-fallback metatable means untranslated keys return themselves (English). Add new strings as `L["key"] = "value"` in the language block inside `Locale.lua`.
 
@@ -118,7 +120,6 @@ Returns `spellID, realSlotID`:
 | `show always\|active` | Visibility mode |
 | `hide dead\|vehicle\|cinematic on\|off` | Hard-stop toggles |
 | `minimap on\|off` | Minimap button |
-| `sounds` | Toggle combat sound |
 | `kbsize <8–24>` | Keybind font size |
 | `kbcolor <r> <g> <b>` | Keybind color (0–1 each) |
 | `kboutline outline\|thick\|none` | Keybind outline style |
